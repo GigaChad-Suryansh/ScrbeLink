@@ -1,0 +1,546 @@
+/**
+ * phase3.css
+ * Styling for Phase 3:
+ * - Customer Order Tracker (5-step progress bar, audit trail timeline, callouts)
+ * - Scribe Portal (Dashboard, 30-min intake timer, hourly check-in banner, nearby order marketplace)
+ * - Scribe Onboarding & Sample Card Preview
+ * - Earnings & Escrow ledger table
+ */
+
+/* ── Common Tags & Badges ─────────────────────────────────────────────── */
+.font-caveat { font-family: 'Caveat', cursive; }
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  padding: 3px 10px;
+  border-radius: 999px;
+}
+.pill--paid        { background: #e0f2fe; color: #0369a1; }
+.pill--accepted    { background: #fef3c7; color: #b45309; }
+.pill--writing     { background: #ede9fe; color: #6d28d9; }
+.pill--dispatched  { background: #ffedd5; color: #c2410c; }
+.pill--delivered   { background: #dcfce7; color: #15803d; }
+.pill--released    { background: #dcfce7; color: #15803d; }
+.pill--in-escrow   { background: #fef3c7; color: #b45309; }
+.pill--transferred { background: #e0e7ff; color: #3730a3; }
+
+.select-input {
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+/* ── Scribe Navigation ────────────────────────────────────────────────── */
+.scribe-portal-pill {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  background: var(--brand-soft);
+  color: var(--brand);
+  padding: 3px 8px;
+  border-radius: 6px;
+}
+.nav-link--active {
+  color: var(--brand) !important;
+  font-weight: 700;
+}
+.nav-link--track {
+  color: var(--brand);
+  font-weight: 600;
+}
+
+/* ── Order Tracker ────────────────────────────────────────────────────── */
+.tracker-page { max-width: 960px; margin: 0 auto; }
+.tracker-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 20px;
+  flex-wrap: wrap;
+  margin-bottom: 24px;
+}
+.order-switcher {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* Stepper Track */
+.tracker-stepper-card {
+  padding: 24px;
+  margin-bottom: 24px;
+}
+.stepper-track {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 8px;
+  position: relative;
+}
+.stepper-node {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  position: relative;
+}
+.node-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--surface);
+  border: 2px solid var(--line);
+  color: var(--muted);
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  font-size: 14px;
+  margin-bottom: 8px;
+  transition: all .2s;
+}
+.node-title { font-size: 13px; font-weight: 700; color: var(--muted); }
+.node-desc { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+.node--active .node-icon {
+  border-color: var(--brand);
+  background: var(--brand);
+  color: #fff;
+  box-shadow: 0 0 0 4px var(--brand-soft);
+}
+.node--active .node-title { color: var(--brand); }
+
+.node--done .node-icon {
+  border-color: var(--ok);
+  background: var(--ok);
+  color: #fff;
+}
+.node--done .node-title { color: var(--ink); }
+
+/* Tracker Details Layout */
+.tracker-grid {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr;
+  gap: 24px;
+  align-items: start;
+}
+.status-callout {
+  padding: 24px;
+  margin-bottom: 20px;
+}
+.callout-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.deadline-badge {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.checkin-alert {
+  margin-top: 16px;
+  padding: 12px 16px;
+  background: #fdf4ff;
+  border: 1px solid #f0abfc;
+  border-radius: 8px;
+  color: #86198f;
+  font-size: 13.5px;
+}
+.otp-alert {
+  margin-top: 16px;
+  padding: 12px 16px;
+  background: #fff7ed;
+  border: 1px solid #fdba74;
+  border-radius: 8px;
+  color: #9a3412;
+  font-size: 13.5px;
+}
+.delivered-alert {
+  margin-top: 16px;
+  padding: 12px 16px;
+  background: #f0fdf4;
+  border: 1px solid #86efac;
+  border-radius: 8px;
+  color: #166534;
+  font-size: 13.5px;
+}
+
+/* Timeline */
+.timeline-card { padding: 24px; }
+.timeline-list { display: flex; flex-direction: column; gap: 16px; }
+.timeline-item {
+  display: flex;
+  gap: 16px;
+  position: relative;
+}
+.timeline-item::before {
+  content: '';
+  position: absolute;
+  left: 7px;
+  top: 18px;
+  bottom: -16px;
+  width: 2px;
+  background: var(--line);
+}
+.timeline-item:last-child::before { display: none; }
+.timeline-dot {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--brand);
+  border: 3px solid var(--surface);
+  box-shadow: 0 0 0 2px var(--brand);
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.timeline-content { flex: 1; }
+.timeline-meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 14px;
+}
+.timeline-time { font-size: 12px; color: var(--muted); }
+.timeline-note { font-size: 13.5px; color: var(--muted); margin-top: 2px; }
+
+/* Specs Sidebar */
+.spec-card, .help-card { padding: 20px; }
+.spec-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 10px 0;
+  border-bottom: 1px dashed var(--line);
+  font-size: 14px;
+}
+.spec-row:last-child { border-bottom: 0; }
+
+/* ── Scribe Dashboard ─────────────────────────────────────────────────── */
+.scribe-dashboard-page { max-width: 1060px; margin: 0 auto; }
+.scribe-dash-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 20px;
+  flex-wrap: wrap;
+  margin-bottom: 24px;
+}
+.dash-quick-stats {
+  display: flex;
+  gap: 12px;
+}
+.dash-stat-box {
+  padding: 12px 18px;
+  display: flex;
+  flex-direction: column;
+}
+.stat-label { font-size: 12px; color: var(--muted); text-transform: uppercase; font-weight: 600; }
+.stat-val { font-size: 22px; font-weight: 700; letter-spacing: -0.02em; }
+.stat-val--ok { color: var(--ok); }
+
+.urgent-action-card {
+  padding: 16px 20px;
+  background: linear-gradient(135deg, #fef3c7, #fef9c3);
+  border: 1px solid #fde047;
+  border-radius: var(--radius);
+  margin-bottom: 24px;
+  display: flex;
+  gap: 16px;
+  align-items: center;
+}
+.urgent-badge {
+  background: #b45309;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 4px 8px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+.urgent-content h3 { font-size: 15px; margin-bottom: 4px; color: #78350f; }
+.urgent-content p { font-size: 13px; color: #92400e; margin: 0; }
+
+.scribe-dash-grid {
+  display: grid;
+  grid-template-columns: 1.25fr 1fr;
+  gap: 24px;
+  align-items: start;
+}
+.column-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 14px;
+}
+.column-header h2 { font-size: 18px; }
+.muted-tag { font-size: 12px; color: var(--muted); }
+
+.empty-state {
+  padding: 32px 20px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+/* Active Order Card */
+.active-order-card {
+  padding: 20px;
+  margin-bottom: 16px;
+}
+.active-card-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+.order-sub-meta { font-size: 13px; color: var(--muted); margin-top: 4px; }
+.payout-badge {
+  text-align: right;
+  background: var(--brand-soft);
+  padding: 6px 12px;
+  border-radius: 8px;
+}
+.payout-title { display: block; font-size: 11px; color: var(--muted); font-weight: 600; text-transform: uppercase; }
+.payout-num { font-size: 18px; font-weight: 700; color: var(--brand); }
+
+.spec-chips {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+.spec-chip {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  font-size: 12px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  color: var(--muted);
+}
+
+.intake-inspection-box, .writing-checkin-box, .dispatched-box {
+  margin-top: 14px;
+  padding: 14px;
+  background: var(--bg);
+  border-radius: 8px;
+  border: 1px solid var(--line);
+}
+.inspection-timer, .checkin-timer { font-size: 13.5px; font-weight: 600; }
+.card-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.checkin-input {
+  width: 100%;
+  font: inherit;
+  padding: 8px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+}
+
+/* Nearby Orders List */
+.nearby-order-card {
+  padding: 18px;
+  margin-bottom: 14px;
+}
+.nearby-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+.distance-chip {
+  font-size: 11px;
+  font-weight: 700;
+  color: #0369a1;
+  background: #e0f2fe;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.payout-tag { text-align: right; }
+.nearby-card-specs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--muted);
+  margin: 12px 0 14px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--line);
+}
+.nearby-card-specs strong { color: var(--ink); }
+
+.scribe-profile-summary { padding: 18px; }
+.sample-card-preview {
+  background: #fffdf7;
+  border: 1px solid var(--line);
+  padding: 12px 14px;
+  border-radius: 6px;
+}
+.sample-scribble { font-size: 18px; margin: 0; color: #1a2a6c; }
+
+/* ── Scribe Onboarding ────────────────────────────────────────────────── */
+.onboarding-page { max-width: 960px; margin: 0 auto; }
+.onboarding-header { margin-bottom: 24px; }
+.onboarding-form-grid {
+  display: grid;
+  grid-template-columns: 1.15fr 1fr;
+  gap: 24px;
+  align-items: start;
+}
+.form-column { padding: 24px; }
+.form-section-title {
+  font-size: 16px;
+  font-weight: 700;
+  margin: 0 0 14px;
+  color: var(--brand);
+}
+.specialties-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip-button {
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+  transition: all .15s;
+}
+.chip-button:hover { border-color: var(--brand); }
+.chip-button--active {
+  border-color: var(--brand);
+  background: var(--brand-soft);
+  color: var(--brand);
+  font-weight: 600;
+}
+
+.sample-upload-zone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  border: 2px dashed var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  cursor: pointer;
+  margin-top: 10px;
+  text-align: center;
+}
+.sample-upload-zone:hover { border-color: var(--brand); background: var(--brand-soft); }
+.text-area-input {
+  width: 100%;
+  font: inherit;
+  font-size: 14px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--ink);
+  resize: vertical;
+}
+.card-preview-tag { font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; }
+.sample-live-card {
+  padding: 16px 16px 36px 44px;
+  margin-top: 8px;
+  transform: none;
+}
+.alert--ok {
+  background: #f0fdf4;
+  color: #166534;
+  border: 1px solid #bbf7d0;
+  padding: 12px 14px;
+  border-radius: 8px;
+  font-size: 13.5px;
+}
+
+/* ── Scribe Earnings & Payout Ledger ──────────────────────────────────── */
+.earnings-page { max-width: 960px; margin: 0 auto; }
+.earnings-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 20px;
+  flex-wrap: wrap;
+  margin-bottom: 24px;
+}
+.metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+}
+.metric-card { padding: 22px; display: flex; flex-direction: column; }
+.metric-label { font-size: 13px; font-weight: 600; color: var(--muted); text-transform: uppercase; }
+.metric-num { font-size: 32px; font-weight: 700; letter-spacing: -0.02em; margin: 6px 0 2px; }
+.metric-num--brand { color: var(--brand); }
+.metric-num--warn { color: #b45309; }
+.metric-note { font-size: 12.5px; color: var(--muted); margin: 0; }
+.escrow-badge {
+  font-size: 12px;
+  font-weight: 600;
+  color: #b45309;
+  background: #fef3c7;
+  padding: 4px 8px;
+  border-radius: 4px;
+  align-self: flex-start;
+}
+
+.payouts-table-card { padding: 24px; }
+.table-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+.table-header h3 { font-size: 18px; }
+.table-responsive { overflow-x: auto; }
+.payout-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: 14px;
+}
+.payout-table th {
+  padding: 10px 12px;
+  border-bottom: 2px solid var(--line);
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+}
+.payout-table td {
+  padding: 12px;
+  border-bottom: 1px solid var(--line);
+}
+.payout-table tr:last-child td { border-bottom: 0; }
+.table-link { color: var(--brand); font-weight: 600; text-decoration: none; }
+.table-link:hover { text-decoration: underline; }
+
+/* ── Responsive Rules ─────────────────────────────────────────────────── */
+@media (max-width: 860px) {
+  .tracker-grid,
+  .scribe-dash-grid,
+  .onboarding-form-grid,
+  .metrics-grid {
+    grid-template-columns: 1fr;
+  }
+  .stepper-track {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+  .stepper-node {
+    flex-direction: row;
+    gap: 12px;
+    text-align: left;
+  }
+  .node-icon { margin-bottom: 0; flex-shrink: 0; }
+}

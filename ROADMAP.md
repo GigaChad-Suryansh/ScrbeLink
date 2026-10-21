@@ -7,14 +7,14 @@ Each phase ends with something you can run and demo. Later phases build on earli
 - Pricing engine (`src/lib/pricing.ts`) implementing the spec: ₹30/page, add-ons, rigid packaging, turnaround formula
 - Landing page: hero, how it works, live price calculator, ground rules
 
-## Phase 2: Customer order flow (front end, mock data)
+## Phase 2: Customer order flow (front end, mock data) (done)
 - Routing (React Router) and a shared order state
 - Upload step: PDF/image upload, client-side word count, cover/credential page warning
 - Add-on and pen/ink configuration form
 - Scribe picker with handwriting sample cards
 - Checkout screen (mock UPI) and order summary
 
-## Phase 3: Order tracking and scribe app (front end, mock data)
+## Phase 3: Order tracking and scribe app (front end, mock data) (done)
 - Customer order tracker following the state machine: Paid, Accepted, Writing, Dispatched, Delivered
 - Scribe dashboard: nearby orders, 30-minute intake inspection timer, hourly rush check-ins
 - Scribe onboarding: UPI VPA and handwriting sample upload
