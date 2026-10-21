@@ -1,0 +1,94 @@
+/**
+ * phase6.css
+ * Styling for Phase 6:
+ * - Admin Panel (Verification cards, disputes triage, strike sanctions, SMS/WhatsApp live feed)
+ * - Customer Dispute Filing Form
+ */
+
+.admin-page { max-width: 1060px; margin: 0 auto; }
+.admin-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 20px;
+  flex-wrap: wrap;
+  margin-bottom: 24px;
+}
+
+.admin-tabs {
+  display: flex;
+  gap: 10px;
+  border-bottom: 2px solid var(--line);
+  margin-bottom: 24px;
+  overflow-x: auto;
+}
+.admin-tab-btn {
+  background: none;
+  border: none;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--muted);
+  padding: 10px 14px;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  white-space: nowrap;
+}
+.admin-tab-btn:hover { color: var(--ink); }
+.tab-btn--active {
+  color: var(--brand) !important;
+  border-bottom-color: var(--brand);
+  font-weight: 700;
+}
+
+.scribe-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 20px;
+}
+.admin-scribe-card { padding: 20px; }
+
+/* Disputes Card */
+.dispute-card { padding: 22px; }
+.dispute-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+.dispute-details-grid {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr;
+  gap: 16px;
+  margin-top: 14px;
+}
+.customer-allegation {
+  background: var(--bg);
+  padding: 12px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+}
+.video-proof-box {
+  background: #0f172a;
+  color: #f8fafc;
+  padding: 12px 14px;
+  border-radius: 8px;
+}
+.video-player-sim {
+  margin-top: 8px;
+  height: 80px;
+  background: #1e293b;
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  font-size: 13px;
+  color: #38bdf8;
+  cursor: pointer;
+  border: 1px dashed #334155;
+}
+
+@media (max-width: 860px) {
+  .dispute-details-grid { grid-template-columns: 1fr; }
+  .scribe-cards-grid { grid-template-columns: 1fr; }
+}

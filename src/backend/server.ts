@@ -284,11 +284,84 @@ app.post('/api/cron/trigger-jobs', (req, res) => {
   })
 })
 
+// ── 7. Phase 6: Courier Logistics (Porter / Borzo) ───────────────────────────
+
+import { globalLogistics } from './logisticsService'
+
+app.post('/api/logistics/dispatch', (req, res) => {
+  const { orderId, dropGate, pickupAddress, partner } = req.body
+  if (!orderId) return res.status(400).json({ error: 'orderId is required' })
+
+  const task = globalLogistics.createCourierDispatch(orderId, dropGate, pickupAddress, partner)
+  return res.json({ success: true, task })
+})
+
+app.post('/api/logistics/confirm-delivery', (req, res) => {
+  const { orderId, deliveryOtp, gateDropPhotoUrl } = req.body
+  const result = globalLogistics.confirmGateDelivery(orderId, deliveryOtp, gateDropPhotoUrl)
+  if (!result.success) return res.status(400).json({ error: result.error })
+  return res.json({ success: true, task: result.task })
+})
+
+// ── 8. Phase 6: Unboxing Video Disputes & Admin Panel ────────────────────────
+
+app.post('/api/disputes/file', (req, res) => {
+  const { orderId, reason, unboxingVideoUrl, customerNotes, customerName, scribeId, amount } = req.body
+  if (!orderId || !unboxingVideoUrl) {
+    return res.status(400).json({ error: 'orderId and unboxingVideoUrl are required' })
+  }
+
+  const dispute = globalLogistics.fileDispute(
+    orderId,
+    reason || 'MISSING_PAGES',
+    unboxingVideoUrl,
+    customerNotes,
+    customerName,
+    scribeId,
+    amount
+  )
+  return res.json({ success: true, dispute })
+})
+
+app.get('/api/admin/disputes', (_req, res) => {
+  res.json({ success: true, disputes: globalLogistics.getAllDisputes() })
+})
+
+app.post('/api/admin/disputes/:id/resolve', (req, res) => {
+  const { decision, adminNotes } = req.body
+  try {
+    const resolved = globalLogistics.resolveDispute(req.params.id, decision, adminNotes || 'Resolved')
+    return res.json({ success: true, dispute: resolved })
+  } catch (err: any) {
+    return res.status(404).json({ error: err.message })
+  }
+})
+
+app.get('/api/admin/scribes', (_req, res) => {
+  res.json({ success: true, scribes: globalLogistics.getAllScribes() })
+})
+
+app.post('/api/admin/scribes/:id/verify', (req, res) => {
+  const { isApproved } = req.body
+  const updated = globalLogistics.verifyScribeCard(req.params.id, Boolean(isApproved))
+  return res.json({ success: true, scribe: updated })
+})
+
+app.post('/api/admin/scribes/:id/strikes', (req, res) => {
+  const { delta } = req.body
+  const updated = globalLogistics.manageScribeStrike(req.params.id, Number(delta) || 1)
+  return res.json({ success: true, scribe: updated })
+})
+
+app.get('/api/admin/notifications', (_req, res) => {
+  res.json({ success: true, notifications: globalLogistics.getNotificationLogs() })
+})
+
 app.get('/api/health', (_req, res) => {
   res.json({
     service: 'ScribeLink Core API & State Machine',
     status: 'ok',
-    phase: 5,
+    phase: 6,
     timestamp: new Date().toISOString(),
   })
 })

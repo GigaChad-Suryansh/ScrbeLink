@@ -32,7 +32,7 @@ Each phase ends with something you can run and demo. Later phases build on earli
 - Payment gateway integration (UPI) in test mode
 - Rush protocol: missed check-in reassigns the order and issues a strike
 
-## Phase 6: Logistics, disputes and admin
+## Phase 6: Logistics, disputes and admin (done)
 - Courier integration (Porter / Borzo) with gate-drop photo and delivery OTP
 - Unboxing-video dispute flow
 - Admin panel: verify handwriting cards, review disputes, manage strikes

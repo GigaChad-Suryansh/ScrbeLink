@@ -38,9 +38,13 @@ import ScribeDashboard from './pages/ScribeDashboard'
 import ScribeOnboarding from './pages/ScribeOnboarding'
 import ScribeEarnings from './pages/ScribeEarnings'
 
+import AdminPanel from './pages/AdminPanel'
+import DisputeFiling from './pages/DisputeFiling'
+
 import './App.css'
 import './order.css'
 import './phase3.css'
+import './phase6.css'
 
 // ── Landing page ──────────────────────────────────────────────────────────
 
@@ -55,8 +59,12 @@ function LandingPage() {
             <a href="#price">Pricing</a>
             <a href="#rules">Rules</a>
             <Link to="/track">Track Order</Link>
+            <Link to="/dispute">Dispute</Link>
             <Link to="/scribe/dashboard" style={{ color: 'var(--brand)', fontWeight: 600 }}>
-              Scribe Portal ➔
+              Scribe Portal
+            </Link>
+            <Link to="/admin" style={{ color: '#b45309', fontWeight: 600 }}>
+              Admin ➔
             </Link>
           </nav>
         </div>
@@ -256,6 +264,15 @@ export default function App() {
             <Route path="dashboard" element={<ScribeDashboard />} />
             <Route path="onboarding" element={<ScribeOnboarding />} />
             <Route path="earnings" element={<ScribeEarnings />} />
+          </Route>
+
+          {/* Phase 6: Admin Panel & Disputes */}
+          <Route path="/admin" element={<ScribeLayout />}>
+            <Route index element={<AdminPanel />} />
+          </Route>
+          <Route path="/dispute" element={<ScribeLayout />}>
+            <Route index element={<DisputeFiling />} />
+            <Route path=":orderId" element={<DisputeFiling />} />
           </Route>
 
           {/* Fallback */}
