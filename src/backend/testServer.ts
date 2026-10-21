@@ -72,6 +72,13 @@ async function runTests() {
     }).then(r => r.json())
     console.assert(rAccept.order.status === 'Accepted', 'State transition to Accepted failed')
 
+    const rWriting = await fetch(`${base}/api/orders/${orderId}/transition`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ nextStatus: 'Writing', note: 'Intake passed. Writing started.' }),
+    }).then(r => r.json())
+    console.assert(rWriting.order.status === 'Writing', 'State transition to Writing failed')
+
     const rCheckin = await fetch(`${base}/api/orders/${orderId}/checkin`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

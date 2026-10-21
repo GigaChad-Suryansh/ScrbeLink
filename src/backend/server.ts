@@ -1,11 +1,12 @@
 /**
  * backend/server.ts
- * Express + TypeScript API server for ScribeLink:
- * - Phone OTP Login & Role Authentication (Customer, Scribe, Admin)
- * - Pricing & Quotation endpoint backed by shared rules
- * - Order submission & state machine management
- * - Scribe marketplace, intake approval & rush check-in endpoints
- * - Escrow ledger balance & withdrawal triggers
+ * Express + TypeScript API server for ScribeLink (Phase 4 & 5):
+ * - Phone OTP Login & Role Authentication
+ * - Shared rules pricing engine & text inspection
+ * - Enforced Order State Machine transitions & deadlines
+ * - Payment Gateway (UPI Test Mode) with instant verification
+ * - 24-hour Escrow Release Clock scheduler
+ * - Rush Protocol: Hourly check-ins, auto-reassignment & strike management
  */
 
 import express from 'express'
@@ -17,6 +18,15 @@ import {
   sanitizeText,
   type OrderInput,
 } from '../shared/rules'
+import {
+  validateTransition,
+  computeDeadlines,
+  computeIntakeDeadline,
+  computeNextCheckInDeadline,
+  type OrderStateEnum,
+} from '../shared/stateMachine'
+import { createUpiPaymentIntent, verifyUpiPayment, getPayment } from './paymentGateway'
+import { globalScheduler } from './scheduler'
 
 const app = express()
 const PORT = process.env.PORT || 4000
@@ -24,134 +34,23 @@ const PORT = process.env.PORT || 4000
 app.use(cors())
 app.use(express.json())
 
-// ── In-Memory Store for Phase 4 ──────────────────────────────────────────────
-
-interface UserRecord {
-  id: string
-  phone: string
-  role: 'customer' | 'scribe' | 'admin'
-  name: string
-  token?: string
-}
-
-const mockUsers: UserRecord[] = [
-  { id: 'usr-1', phone: '+919876543210', role: 'scribe', name: 'Ananya R.' },
-  { id: 'usr-2', phone: '+919988776655', role: 'customer', name: 'Suryansh S.' },
-  { id: 'usr-3', phone: '+919123456789', role: 'admin', name: 'ScribeLink Admin' },
-]
-
-const activeOtps = new Map<string, { otp: string; expiresAt: number }>()
-
-// ── 1. Phone OTP Authentication Endpoints ────────────────────────────────────
-
-/** Request an OTP for a given mobile number */
-app.post('/api/auth/otp/send', (req, res) => {
-  const { phone } = req.body
-  if (!phone || typeof phone !== 'string') {
-    return res.status(400).json({ error: 'Phone number is required' })
-  }
-
-  // Demo OTP is 123456 (or generated in prod)
-  const otp = '123456'
-  const expiresAt = Date.now() + 5 * 60 * 1000 // 5 minutes validity
-  activeOtps.set(phone.trim(), { otp, expiresAt })
-
-  return res.json({
-    success: true,
-    message: `OTP sent successfully to ${phone}. (Use 123456 for demo verification)`,
-    expiresInSeconds: 300,
-  })
-})
-
-/** Verify OTP and log in / register with roles */
-app.post('/api/auth/otp/verify', (req, res) => {
-  const { phone, otp, requestedRole } = req.body
-  if (!phone || !otp) {
-    return res.status(400).json({ error: 'Phone and OTP are required' })
-  }
-
-  const session = activeOtps.get(phone.trim())
-  if (!session || session.otp !== otp.trim() || Date.now() > session.expiresAt) {
-    return res.status(401).json({ error: 'Invalid or expired OTP' })
-  }
-
-  activeOtps.delete(phone.trim())
-
-  let user = mockUsers.find(u => u.phone === phone.trim())
-  if (!user) {
-    user = {
-      id: `usr-${Date.now()}`,
-      phone: phone.trim(),
-      role: requestedRole === 'scribe' ? 'scribe' : 'customer',
-      name: `User ${phone.slice(-4)}`,
-    }
-    mockUsers.push(user)
-  }
-
-  const token = `sl_tok_${user.id}_${Date.now()}`
-  return res.json({
-    success: true,
-    token,
-    user: {
-      id: user.id,
-      phone: user.phone,
-      role: user.role,
-      name: user.name,
-    },
-  })
-})
-
-// ── 2. Pricing & Validation Endpoint (Shared Rules) ──────────────────────────
-
-app.post('/api/pricing/quote', (req, res) => {
-  const input: OrderInput = req.body
-  if (typeof input.words !== 'number' || input.words < 0) {
-    return res.status(400).json({ error: 'Invalid word count' })
-  }
-
-  const quote = calculateQuote({
-    words: input.words,
-    simpleDrawings: input.simpleDrawings || 0,
-    complexDrawings: input.complexDrawings || 0,
-    graphs: input.graphs || 0,
-    customTemplate: Boolean(input.customTemplate),
-  })
-
-  return res.json({ success: true, quote })
-})
-
-app.post('/api/text/analyze', (req, res) => {
-  const { rawText } = req.body
-  if (typeof rawText !== 'string') {
-    return res.status(400).json({ error: 'rawText is required' })
-  }
-
-  const clean = sanitizeText(rawText)
-  const words = countWords(clean)
-  const coverResult = checkCoverPage(clean)
-
-  return res.json({
-    success: true,
-    words,
-    coverPageWarning: coverResult.warning,
-    coverPageScore: coverResult.score,
-    detectedKeywords: coverResult.matches,
-  })
-})
-
-// ── 3. Orders & State Machine Endpoints ───────────────────────────────────────
+// ── In-Memory Database ───────────────────────────────────────────────────────
 
 interface OrderDoc {
   id: string
   title: string
   subject: string
-  status: string
+  status: OrderStateEnum
   customerTotal: number
   scribePayout: number
   scribeId?: string
+  scribeName?: string
   pages: number
   words: number
   deliveryOtp: string
+  intakeDeadline?: string
+  nextCheckInDue?: string
+  finalDeadline: string
   timeline: Array<{ status: string; timestamp: string; note: string }>
 }
 
@@ -163,17 +62,108 @@ const dbOrders: OrderDoc[] = [
     status: 'Writing',
     customerTotal: 248,
     scribePayout: 165,
-    scribeId: 'usr-1',
+    scribeId: 'S-2041',
+    scribeName: 'Ananya R.',
     pages: 8,
     words: 1540,
     deliveryOtp: '7412',
+    intakeDeadline: 'Passed',
+    nextCheckInDue: new Date(Date.now() + 45 * 60 * 1000).toISOString(),
+    finalDeadline: computeDeadlines(8).formattedFinalDeadline,
     timeline: [
       { status: 'Paid', timestamp: '2 hours ago', note: 'Escrow payment locked.' },
-      { status: 'Accepted', timestamp: '1.8 hours ago', note: 'Scribe verified content.' },
+      { status: 'Accepted', timestamp: '1.8 hours ago', note: 'Scribe verified content within 30-min window.' },
       { status: 'Writing', timestamp: '1.5 hours ago', note: 'Writing in progress.' },
     ],
   },
 ]
+
+// ── 1. Auth & OTP Endpoints ──────────────────────────────────────────────────
+
+const activeOtps = new Map<string, { otp: string; expiresAt: number }>()
+
+app.post('/api/auth/otp/send', (req, res) => {
+  const { phone } = req.body
+  if (!phone) return res.status(400).json({ error: 'Phone number is required' })
+
+  const otp = '123456'
+  activeOtps.set(phone.trim(), { otp, expiresAt: Date.now() + 300000 })
+  return res.json({
+    success: true,
+    message: `OTP sent to ${phone}. (Demo OTP: 123456)`,
+    expiresInSeconds: 300,
+  })
+})
+
+app.post('/api/auth/otp/verify', (req, res) => {
+  const { phone, otp, requestedRole } = req.body
+  const session = activeOtps.get(phone?.trim())
+  if (!session || session.otp !== otp?.trim() || Date.now() > session.expiresAt) {
+    return res.status(401).json({ error: 'Invalid or expired OTP' })
+  }
+
+  activeOtps.delete(phone.trim())
+  return res.json({
+    success: true,
+    token: `sl_token_${Date.now()}`,
+    user: {
+      phone,
+      role: requestedRole || 'customer',
+      name: requestedRole === 'scribe' ? 'Ananya R.' : 'Student User',
+    },
+  })
+})
+
+// ── 2. Pricing & Heuristics (Shared Rules) ───────────────────────────────────
+
+app.post('/api/pricing/quote', (req, res) => {
+  const input: OrderInput = req.body
+  const quote = calculateQuote(input)
+  return res.json({ success: true, quote })
+})
+
+app.post('/api/text/analyze', (req, res) => {
+  const { rawText } = req.body
+  const clean = sanitizeText(rawText || '')
+  const words = countWords(clean)
+  const coverResult = checkCoverPage(clean)
+  return res.json({
+    success: true,
+    words,
+    coverPageWarning: coverResult.warning,
+    detectedKeywords: coverResult.matches,
+  })
+})
+
+// ── 3. Phase 5: Payment Gateway (UPI Test Mode) ──────────────────────────────
+
+app.post('/api/payment/upi/initiate', (req, res) => {
+  const { orderId, amount, payerVpa } = req.body
+  if (!orderId || !amount) {
+    return res.status(400).json({ error: 'orderId and amount are required' })
+  }
+
+  const intent = createUpiPaymentIntent(orderId, amount, payerVpa || 'student@upi')
+  return res.json({ success: true, payment: intent })
+})
+
+app.post('/api/payment/upi/verify', (req, res) => {
+  const { paymentId, forceSuccess } = req.body
+  try {
+    const result = verifyUpiPayment(paymentId, forceSuccess ?? true)
+    return res.json(result)
+  } catch (err: any) {
+    return res.status(404).json({ error: err.message })
+  }
+})
+
+app.get('/api/payment/:id', (req, res) => {
+  const payment = getPayment(req.params.id)
+  if (!payment) return res.status(404).json({ error: 'Payment not found' })
+  return res.json({ success: true, payment })
+})
+
+// ── 4. Phase 5: Enforced Order State Machine Transitions ─────────────────────
 
 app.get('/api/orders/:id', (req, res) => {
   const order = dbOrders.find(o => o.id === req.params.id)
@@ -191,9 +181,10 @@ app.post('/api/orders/create', (req, res) => {
     customTemplate: Boolean(customTemplate),
   })
 
+  const deadlines = computeDeadlines(q.pages)
   const newOrder: OrderDoc = {
     id: `SL-${Math.floor(1000 + Math.random() * 9000)}`,
-    title: title || 'Untitled Note Assignment',
+    title: title || 'Manuscript Order',
     subject: subject || 'General',
     status: 'Paid',
     customerTotal: q.customerTotal,
@@ -201,69 +192,104 @@ app.post('/api/orders/create', (req, res) => {
     pages: q.pages,
     words: words || 0,
     deliveryOtp: String(Math.floor(1000 + Math.random() * 9000)),
-    timeline: [{ status: 'Paid', timestamp: 'Just now', note: 'Escrow payment confirmed.' }],
+    finalDeadline: deadlines.formattedFinalDeadline,
+    timeline: [
+      { status: 'Paid', timestamp: 'Just now', note: 'Escrow payment locked in test gateway.' },
+    ],
   }
 
   dbOrders.push(newOrder)
   return res.status(201).json({ success: true, order: newOrder })
 })
 
-/** State Machine Transitions */
+/** Transition enforcing state machine rules */
 app.post('/api/orders/:id/transition', (req, res) => {
-  const { nextStatus, note, scribeId } = req.body
+  const { nextStatus, note, scribeId, scribeName } = req.body
   const order = dbOrders.find(o => o.id === req.params.id)
   if (!order) return res.status(404).json({ error: 'Order not found' })
 
-  const validTransitions: Record<string, string[]> = {
-    Paid: ['Accepted', 'Cancelled'],
-    Accepted: ['Writing', 'Cancelled'],
-    Writing: ['Dispatched', 'Cancelled'],
-    Dispatched: ['Delivered', 'Disputed'],
-    Delivered: [],
-  }
-
-  const allowed = validTransitions[order.status] || []
-  if (!allowed.includes(nextStatus)) {
-    return res.status(400).json({
-      error: `Invalid status transition from ${order.status} to ${nextStatus}`,
-    })
+  // Validate state machine rule
+  const validation = validateTransition(order.status, nextStatus)
+  if (!validation.success) {
+    return res.status(400).json({ error: validation.error })
   }
 
   order.status = nextStatus
   if (scribeId) order.scribeId = scribeId
+  if (scribeName) order.scribeName = scribeName
+
+  // Handle specialized state machine triggers
+  if (nextStatus === 'Accepted') {
+    const intakeLimit = computeIntakeDeadline()
+    order.intakeDeadline = intakeLimit.toISOString()
+  } else if (nextStatus === 'Writing') {
+    const nextCheckIn = computeNextCheckInDeadline()
+    order.nextCheckInDue = nextCheckIn.toISOString()
+    globalScheduler.registerRushWatch(order.id, order.scribeId || 'S-2041', order.scribeName || 'Scribe', nextCheckIn)
+  } else if (nextStatus === 'Delivered') {
+    // Phase 5: Start 24-hour Escrow Payout Clock
+    globalScheduler.registerEscrowClock(order.id, order.scribeId || 'S-2041', order.scribePayout)
+  }
+
   order.timeline.push({
     status: nextStatus,
     timestamp: new Date().toLocaleTimeString(),
-    note: note || `Transitioned to ${nextStatus}`,
+    note: note || validation.auditLog,
   })
 
-  return res.json({ success: true, order })
+  return res.json({ success: true, order, audit: validation.auditLog })
 })
 
-// ── 4. Scribe Marketplace & Check-ins ────────────────────────────────────────
+// ── 5. Phase 5: Rush Check-ins & Strike Management ───────────────────────────
 
 app.post('/api/orders/:id/checkin', (req, res) => {
   const { note } = req.body
   const order = dbOrders.find(o => o.id === req.params.id)
   if (!order) return res.status(404).json({ error: 'Order not found' })
+  if (order.status !== 'Writing') {
+    return res.status(400).json({ error: 'Check-in only permitted while in Writing status' })
+  }
+
+  const nextDue = computeNextCheckInDeadline()
+  order.nextCheckInDue = nextDue.toISOString()
+  globalScheduler.recordCheckIn(order.id, nextDue)
 
   order.timeline.push({
     status: 'Writing Check-in',
     timestamp: new Date().toLocaleTimeString(),
-    note: note || 'Hourly rush progress verified.',
+    note: note || 'Hourly rush check-in verified. Timer reset.',
   })
 
-  return res.json({ success: true, message: 'Check-in saved', order })
+  return res.json({ success: true, nextCheckInDue: nextDue.toISOString(), order })
 })
 
-// ── Health Check ─────────────────────────────────────────────────────────────
+app.get('/api/scribes/:id/strikes', (req, res) => {
+  const strikes = globalScheduler.getScribeStrikeInfo(req.params.id)
+  return res.json({ success: true, strikes })
+})
+
+// ── 6. Scheduled Job Runner Endpoint (for Cron/Testing) ──────────────────────
+
+app.post('/api/cron/trigger-jobs', (req, res) => {
+  const simulatedTime = req.body.simulatedTimestamp ? new Date(req.body.simulatedTimestamp) : new Date()
+  const escrowReleased = globalScheduler.runEscrowReleaseJob(simulatedTime)
+  const rushResults = globalScheduler.runRushMonitorJob(simulatedTime)
+
+  return res.json({
+    success: true,
+    simulatedTime: simulatedTime.toISOString(),
+    escrowReleased,
+    rushResults,
+    auditLogs: globalScheduler.getAuditLogs().slice(-10),
+  })
+})
 
 app.get('/api/health', (_req, res) => {
   res.json({
-    service: 'ScribeLink Core API',
+    service: 'ScribeLink Core API & State Machine',
     status: 'ok',
+    phase: 5,
     timestamp: new Date().toISOString(),
-    rolesSupported: ['customer', 'scribe', 'admin'],
   })
 })
 
@@ -271,6 +297,6 @@ export { app }
 
 if (process.env.NODE_ENV !== 'test') {
   app.listen(PORT, () => {
-    console.log(`[ScribeLink Backend] API running at http://localhost:${PORT}`)
+    console.log(`[ScribeLink Backend] Phase 5 API running at http://localhost:${PORT}`)
   })
 }

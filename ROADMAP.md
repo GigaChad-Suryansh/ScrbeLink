@@ -26,7 +26,7 @@ Each phase ends with something you can run and demo. Later phases build on earli
 - Phone OTP login, roles (customer, scribe, admin)
 - Move pricing and word-count rules to a shared package used by both sides
 
-## Phase 5: Order state machine and money
+## Phase 5: Order state machine and money (done)
 - Enforced status transitions and deadline calculation
 - Escrow ledger and the 24-hour payout clock (scheduled job)
 - Payment gateway integration (UPI) in test mode
