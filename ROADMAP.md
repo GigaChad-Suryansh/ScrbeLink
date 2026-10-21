@@ -20,7 +20,7 @@ Each phase ends with something you can run and demo. Later phases build on earli
 - Scribe onboarding: UPI VPA and handwriting sample upload
 - Earnings and payout view
 
-## Phase 4: Backend and database
+## Phase 4: Backend and database (done)
 - Node.js API (Express or Fastify) with TypeScript
 - PostgreSQL schema from the spec, with migrations
 - Phone OTP login, roles (customer, scribe, admin)
