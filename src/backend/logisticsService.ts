@@ -7,6 +7,7 @@
  * - Triggers WhatsApp / SMS alerts
  */
 
+import { constantTimeEqual, randomDigits, randomToken } from '../shared/random'
 import type { CourierTask, NotificationLog, DisputeRecord, AdminScribeApproval } from '../shared/logisticsDisputes'
 
 export class LogisticsService {
@@ -14,6 +15,9 @@ export class LogisticsService {
   private disputes = new Map<string, DisputeRecord>()
   private notifications: NotificationLog[] = []
   private scribeApprovals = new Map<string, AdminScribeApproval>()
+  /** Who to message for each order. Falls back to the demo number only when unknown. */
+  private customerPhones = new Map<string, string>()
+  private phoneFor = (orderId: string) => this.customerPhones.get(orderId) ?? '+919876543210'
 
   constructor() {
     // Seed sample scribe approvals
@@ -76,10 +80,14 @@ export class LogisticsService {
     orderId: string,
     dropGate = 'Gate 1, DTU Main Campus',
     pickupAddress = 'Hostel Block 4, DTU',
-    partner: 'Borzo' | 'Porter' = 'Borzo'
+    partner: 'Borzo' | 'Porter' = 'Borzo',
+    /** Reuse the order's own OTP so the customer sees one code everywhere. */
+    orderOtp?: string,
+    customerPhone?: string
   ): CourierTask {
-    const trackingId = `${partner.toUpperCase()}-${Math.floor(100000 + Math.random() * 900000)}`
-    const deliveryOtp = String(Math.floor(1000 + Math.random() * 9000))
+    const trackingId = `${partner.toUpperCase()}-${randomDigits(6)}`
+    const deliveryOtp = orderOtp ?? randomDigits(6)
+    if (customerPhone) this.customerPhones.set(orderId, customerPhone)
 
     const task: CourierTask = {
       trackingId,
@@ -98,7 +106,7 @@ export class LogisticsService {
 
     // Notify Customer via WhatsApp / SMS
     this.sendNotification(
-      '+919876543210',
+      this.phoneFor(orderId),
       'WHATSAPP',
       'COURIER_DISPATCHED',
       `📦 ScribeLink: Courier ${task.courierRiderName} is on the way to ${dropGate}. Your Delivery OTP is ${deliveryOtp}.`
@@ -111,7 +119,7 @@ export class LogisticsService {
     const task = this.courierTasks.get(orderId)
     if (!task) return { success: false, error: 'Courier task not found for order' }
 
-    if (task.deliveryOtp !== providedOtp.trim()) {
+    if (typeof providedOtp !== 'string' || !constantTimeEqual(task.deliveryOtp, providedOtp.trim())) {
       return { success: false, error: 'Invalid Delivery OTP! Handover denied.' }
     }
 
@@ -121,7 +129,7 @@ export class LogisticsService {
 
     // Alert Customer
     this.sendNotification(
-      '+919876543210',
+      this.phoneFor(orderId),
       'WHATSAPP',
       'DELIVERY_CONFIRMED',
       `🎉 ScribeLink: Your manuscript has been safely handed over at ${task.dropGate}. 24-hour dispute window has begun.`
@@ -145,14 +153,14 @@ export class LogisticsService {
     scribeId = 'S-2041',
     amount = 350
   ): DisputeRecord {
-    const disputeId = `DISP-${Math.floor(100 + Math.random() * 900)}`
+    const disputeId = `DISP-${randomToken(3)}`
     const dispute: DisputeRecord = {
       id: disputeId,
       orderId,
       openedByUserId: 'usr-cust',
       customerName,
       scribeId,
-      scribeName: 'Ananya R.',
+      scribeName: scribeId,
       amount,
       reason,
       unboxingVideoUrl,
@@ -222,7 +230,7 @@ export class LogisticsService {
 
   sendNotification(recipient: string, channel: 'WHATSAPP' | 'SMS', templateName: string, content: string): NotificationLog {
     const log: NotificationLog = {
-      id: `NOTIF-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`,
+      id: `NOTIF-${Date.now()}-${randomToken(2)}`,
       channel,
       recipient,
       templateName,

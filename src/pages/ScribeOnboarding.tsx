@@ -10,6 +10,7 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useScribePortal } from '../lib/scribeStore'
+import { checkFile, uploadHint } from '../lib/checkUpload'
 
 const SUBJECT_OPTIONS = [
   'Engineering & Tech',
@@ -33,6 +34,7 @@ export default function ScribeOnboarding() {
   const [sampleText, setSampleText] = useState(profile.sampleText || "Newton's second law: F = ma. The acceleration of a body is directly proportional to the net force.")
   const [specialties, setSpecialties] = useState<string[]>(profile.specialties)
   const [sampleFileName, setSampleFileName] = useState<string>('sample_card_dtu.jpg')
+  const [sampleError, setSampleError] = useState('')
   const [savedSuccess, setSavedSuccess] = useState(false)
 
   function toggleSpecialty(subj: string) {
@@ -158,18 +160,29 @@ export default function ScribeOnboarding() {
               <input
                 id="sample-file-input"
                 type="file"
-                accept="image/*,.pdf"
+                accept=".png,.jpg,.jpeg,.webp"
                 style={{ display: 'none' }}
-                onChange={e => {
-                  if (e.target.files?.[0]) setSampleFileName(e.target.files[0].name)
+                onChange={async e => {
+                  const input = e.target
+                  const f = input.files?.[0]
+                  if (!f) return
+                  const verdict = await checkFile(f, 'image')
+                  if (verdict.ok) {
+                    setSampleError('')
+                    setSampleFileName(f.name)
+                  } else {
+                    setSampleError(verdict.error)
+                    input.value = ''
+                  }
                 }}
               />
               <span style={{ fontSize: 28 }}>🖋️</span>
               <p style={{ fontWeight: 600, margin: '6px 0 2px' }}>
                 {sampleFileName ? `File: ${sampleFileName}` : 'Upload handwritten sample image'}
               </p>
-              <span style={{ fontSize: 12, color: 'var(--muted)' }}>Click to replace sample image</span>
+              <span style={{ fontSize: 12, color: 'var(--muted)' }}>Click to replace sample image. {uploadHint('image')}.</span>
             </div>
+            {sampleError && <p role="alert" style={{ color: 'var(--warn)', fontSize: 13, marginTop: 6 }}>{sampleError}</p>}
 
             <div className="field" style={{ marginTop: 14 }}>
               <label htmlFor="sample-text">Sample Excerpt Text</label>

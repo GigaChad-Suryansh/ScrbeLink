@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Tests
+        run: npm test
+
+      - name: Build
+        run: npm run build 2>&1 | tee build.log
+
+      # Some pages still run backend modules in the browser. If one of them pulls in a
+      # Node-only module, Vite only warns and the page breaks at runtime, so fail here.
+      - name: Browser bundle must not need Node modules
+        run: "! grep -qi 'externalized for browser compatibility' build.log"
+
+      - name: Dependency audit (production, high severity)
+        run: npm audit --omit=dev --audit-level=high

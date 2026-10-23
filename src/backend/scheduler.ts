@@ -20,6 +20,8 @@ export interface ManagedEscrowRecord {
   releaseDueAt: Date
   isReleased: boolean
   isDisputed: boolean
+  /** Set when an admin settles a dispute. Only RELEASED_TO_SCRIBE pays the scribe. */
+  disputeOutcome?: 'REFUNDED_TO_CUSTOMER' | 'RELEASED_TO_SCRIBE' | 'SPLIT'
 }
 
 export interface ActiveRushWatch {
@@ -76,6 +78,32 @@ export class OrderStateMachineScheduler {
     }
   }
 
+  /** An open dispute freezes the payout until an admin settles it. */
+  freezeEscrow(orderId: string): boolean {
+    const record = this.escrowRecords.find(r => r.orderId === orderId && !r.isReleased)
+    if (!record) return false
+    record.isDisputed = true
+    this.log(`[ESCROW_FROZEN] Dispute opened on ${orderId}. Payout of ₹${record.amount} is on hold.`)
+    return true
+  }
+
+  /** Settle a frozen payout. Only a ruling in the scribe's favour releases it. */
+  settleEscrow(orderId: string, outcome: 'REFUNDED_TO_CUSTOMER' | 'RELEASED_TO_SCRIBE' | 'SPLIT'): boolean {
+    const record = this.escrowRecords.find(r => r.orderId === orderId && r.isDisputed && !r.disputeOutcome)
+    if (!record) return false
+    record.disputeOutcome = outcome
+    if (outcome === 'RELEASED_TO_SCRIBE') {
+      record.isDisputed = false
+      record.isReleased = true
+    }
+    this.log(`[ESCROW_SETTLED] Dispute on ${orderId} ruled ${outcome}.`)
+    return true
+  }
+
+  getEscrowRecord(orderId: string): ManagedEscrowRecord | undefined {
+    return this.escrowRecords.find(r => r.orderId === orderId)
+  }
+
   /** Run the 24-hour Escrow Job */
   runEscrowReleaseJob(simulatedCurrentTime = new Date()): number {
     let releasedCount = 0
@@ -92,9 +120,10 @@ export class OrderStateMachineScheduler {
   }
 
   /** Run the Hourly Rush Protocol Job */
-  runRushMonitorJob(simulatedCurrentTime = new Date()): { reassignedCount: number; strikesGiven: number } {
+  runRushMonitorJob(simulatedCurrentTime = new Date()): { reassignedCount: number; strikesGiven: number; reassignedOrderIds: string[] } {
     let reassignedCount = 0
     let strikesGiven = 0
+    const reassignedOrderIds: string[] = []
 
     for (const watch of this.rushWatches) {
       if (watch.isReassigned) continue
@@ -104,6 +133,7 @@ export class OrderStateMachineScheduler {
       if (evaluation.action === 'REASSIGN_AND_STRIKE') {
         watch.isReassigned = true
         reassignedCount++
+        reassignedOrderIds.push(watch.orderId)
         strikesGiven++
 
         // Strike penalty
@@ -120,7 +150,7 @@ export class OrderStateMachineScheduler {
 
         if (scribeRec.strikes >= 3) {
           scribeRec.isSuspended = true
-          strikeNote && this.log(`[SCRIBE_SUSPENDED] Scribe ${watch.scribeId} reached 3 strikes! Account suspended.`)
+          this.log(`[SCRIBE_SUSPENDED] Scribe ${watch.scribeId} reached 3 strikes! Account suspended.`)
         }
 
         this.scribeStrikes.set(watch.scribeId, scribeRec)
@@ -128,7 +158,7 @@ export class OrderStateMachineScheduler {
       }
     }
 
-    return { reassignedCount, strikesGiven }
+    return { reassignedCount, strikesGiven, reassignedOrderIds }
   }
 
   getScribeStrikeInfo(scribeId: string): ScribeStrikeLedger {

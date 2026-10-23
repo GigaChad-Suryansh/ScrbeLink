@@ -9,6 +9,7 @@
 import { useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { globalLogistics } from '../backend/logisticsService'
+import { checkFile, uploadHint } from '../lib/checkUpload'
 import type { DisputeRecord } from '../shared/logisticsDisputes'
 
 export default function DisputeFiling() {
@@ -18,15 +19,21 @@ export default function DisputeFiling() {
   const [targetOrderId, setTargetOrderId] = useState(orderId || 'SL-5830')
   const [reason, setReason] = useState<DisputeRecord['reason']>('MISSING_PAGES')
   const [notes, setNotes] = useState('')
-  const [videoFile, setVideoFile] = useState<string>('unboxing_proof.mp4')
+  // No default: a claim needs a real, validated video (rule 4).
+  const [videoFile, setVideoFile] = useState<string>('')
+  const [videoError, setVideoError] = useState('')
   const [submitted, setSubmitted] = useState(false)
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
+    if (!videoFile) {
+      setVideoError('Attach your continuous unboxing video to file a claim.')
+      return
+    }
     globalLogistics.fileDispute(
       targetOrderId,
       reason,
-      `https://storage.scribelink.in/unboxing/${videoFile}`,
+      `https://storage.scribelink.in/unboxing/${encodeURIComponent(videoFile)}`,
       notes || 'Package was inspected on arrival at college gate.'
     )
     setSubmitted(true)
@@ -86,10 +93,21 @@ export default function DisputeFiling() {
               <input
                 id="unboxing-file-input"
                 type="file"
-                accept="video/*"
+                accept=".mp4,.mov"
                 style={{ display: 'none' }}
-                onChange={e => {
-                  if (e.target.files?.[0]) setVideoFile(e.target.files[0].name)
+                onChange={async e => {
+                  const input = e.target
+                  const f = input.files?.[0]
+                  if (!f) return
+                  const verdict = await checkFile(f, 'video')
+                  if (verdict.ok) {
+                    setVideoError('')
+                    setVideoFile(f.name)
+                  } else {
+                    setVideoError(verdict.error)
+                    setVideoFile('')
+                    input.value = ''
+                  }
                 }}
               />
               <span style={{ fontSize: 32 }}>📹</span>
@@ -97,9 +115,10 @@ export default function DisputeFiling() {
                 {videoFile ? `Attached: ${videoFile}` : 'Upload video showing intact seal opening'}
               </p>
               <span style={{ fontSize: 12, color: 'var(--muted)' }}>
-                Rule 4: continuous single-take video required for escrow refund
+                Rule 4: continuous single-take video required for escrow refund. {uploadHint('video')}.
               </span>
             </div>
+            {videoError && <p role="alert" style={{ color: 'var(--warn)', fontSize: 13, marginTop: 6 }}>{videoError}</p>}
           </div>
 
           <div className="field" style={{ marginTop: 14 }}>
@@ -116,7 +135,7 @@ export default function DisputeFiling() {
           </div>
 
           <div style={{ display: 'flex', gap: 12, marginTop: 24 }}>
-            <button type="submit" className="btn btn-primary full" id="submit-dispute-btn">
+            <button type="submit" className="btn btn-primary full" id="submit-dispute-btn" disabled={!videoFile}>
               Lock Escrow &amp; File Claim
             </button>
             <Link to={`/track/${targetOrderId}`} className="btn btn-ghost full" style={{ textAlign: 'center' }}>

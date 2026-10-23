@@ -7,6 +7,8 @@
  * - Idempotency & signature verification
  */
 
+import { randomToken } from '../shared/random'
+
 export interface UpiPaymentIntent {
   paymentId: string
   orderId: string
@@ -28,7 +30,7 @@ export function createUpiPaymentIntent(
   payerVpa: string,
   payeeVpa = 'scribelink.escrow@icici'
 ): UpiPaymentIntent {
-  const paymentId = `PAY-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`
+  const paymentId = `PAY-${Date.now()}-${randomToken(3)}`
   const deepLink = `upi://pay?pa=${payeeVpa}&pn=ScribeLink%20Escrow&tr=${paymentId}&am=${amount}&cu=INR&tn=Order%20${orderId}`
   
   // High quality SVG QR string representing the UPI payment URI

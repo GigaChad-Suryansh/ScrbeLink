@@ -10,6 +10,7 @@ import { useNavigate } from 'react-router-dom'
 import { useOrder } from '../lib/orderStore'
 import { sanitizeText, wordCount } from '../lib/sanitize'
 import { detectCoverPage } from '../lib/coverPage'
+import { checkFile } from '../lib/checkUpload'
 import type { UploadedDoc } from '../lib/orderStore'
 
 const ACCEPTED = '.txt,.pdf,.jpg,.jpeg,.png,.webp'
@@ -52,6 +53,11 @@ export default function StepUpload() {
     }
     setLoading(true)
     try {
+      const verdict = await checkFile(f, 'document')
+      if (!verdict.ok) {
+        setError(verdict.error)
+        return
+      }
       const raw = await extractText(f)
       const clean = sanitizeText(raw)
       const wc = wordCount(clean)

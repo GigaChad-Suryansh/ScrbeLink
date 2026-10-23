@@ -1,0 +1,8 @@
+/* Phone-width fixes. Imported last so it wins over the per-phase stylesheets. */
+@media (max-width: 700px) {
+  .nav-inner { height: auto; min-height: 62px; flex-wrap: wrap; gap: 4px 16px; padding-block: 8px; }
+  .nav nav { flex-wrap: wrap; gap: 6px 16px; }
+  .wizard-crumb { white-space: normal; }
+  .dash-quick-stats { flex-wrap: wrap; }
+  [class*='-tabs'], [class*='tab-bar'] { overflow-x: auto; max-width: 100%; }
+}
