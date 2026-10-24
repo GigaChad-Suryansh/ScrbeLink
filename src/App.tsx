@@ -4,10 +4,12 @@
  * and ScribePortalContext (Phase 3).
  */
 
-import { useReducer, useState } from 'react'
+import { useEffect, useReducer } from 'react'
 import { Routes, Route, Navigate, Link } from 'react-router-dom'
 
-import { OrderContext, orderReducer, INITIAL_ORDER } from './lib/orderStore'
+import { OrderContext, orderReducer, INITIAL_ORDER, type OrderState } from './lib/orderStore'
+import { usePersistentState } from './lib/usePersistentState'
+import { randomDigits } from './shared/random'
 import {
   ScribePortalContext,
   INITIAL_SCRIBE_PROFILE,
@@ -125,12 +127,23 @@ function LandingPage() {
 // ── App ───────────────────────────────────────────────────────────────────
 
 export default function App() {
-  const [orderState, orderDispatch] = useReducer(orderReducer, INITIAL_ORDER)
+  const [orderState, orderDispatch] = useReducer(orderReducer, INITIAL_ORDER, (init): OrderState => {
+    try {
+      const raw = sessionStorage.getItem('scribelink.v1.wizard')
+      return raw ? { ...init, ...(JSON.parse(raw) as Partial<OrderState>) } : init
+    } catch {
+      return init
+    }
+  })
+  // The in-progress order survives a refresh (per tab), so a reload mid-checkout does not lose the upload.
+  useEffect(() => {
+    try { sessionStorage.setItem('scribelink.v1.wizard', JSON.stringify(orderState)) } catch { /* ignore */ }
+  }, [orderState])
 
   // Phase 3 Scribe portal state
-  const [profile, setProfile] = useState<ScribeProfile>(INITIAL_SCRIBE_PROFILE)
-  const [orders, setOrders] = useState<TrackableOrder[]>(INITIAL_ORDERS)
-  const [payouts, setPayouts] = useState<PayoutTransaction[]>(INITIAL_PAYOUTS)
+  const [profile, setProfile] = usePersistentState<ScribeProfile>('profile', INITIAL_SCRIBE_PROFILE)
+  const [orders, setOrders] = usePersistentState<TrackableOrder[]>('orders', INITIAL_ORDERS)
+  const [payouts, setPayouts] = usePersistentState<PayoutTransaction[]>('payouts', INITIAL_PAYOUTS)
 
   function updateProfile(updated: Partial<ScribeProfile>) {
     setProfile(prev => ({ ...prev, ...updated }))
@@ -170,7 +183,7 @@ export default function App() {
         if (nextStatus === 'Writing') {
           nextCheckIn = '58 mins remaining'
         } else if (nextStatus === 'Dispatched') {
-          otp = otp || String(Math.floor(1000 + Math.random() * 9000))
+          otp = otp || randomDigits(6)
         }
 
         return {
@@ -202,7 +215,7 @@ export default function App() {
         }))
         setPayouts(p => [
           {
-            id: `TX-${Math.floor(1000 + Math.random() * 9000)}`,
+            id: `TX-${randomDigits(4)}`,
             orderId,
             amount: target.scribePayout,
             status: 'Released',
@@ -213,6 +226,10 @@ export default function App() {
         ])
       }
     }
+  }
+
+  function addOrder(order: TrackableOrder) {
+    setOrders(prev => [order, ...prev.filter(o => o.id !== order.id)])
   }
 
   function submitCheckIn(orderId: string) {
@@ -238,6 +255,7 @@ export default function App() {
           acceptOrder,
           advanceOrderStatus,
           submitCheckIn,
+          addOrder,
         }}
       >
         <Routes>

@@ -193,6 +193,8 @@ export interface ScribePortalContextType {
   acceptOrder: (orderId: string) => void
   advanceOrderStatus: (orderId: string, nextStatus: OrderStatus, note: string) => void
   submitCheckIn: (orderId: string) => void
+  /** A customer's newly paid order joins the pool that scribes and the tracker read from. */
+  addOrder: (order: TrackableOrder) => void
 }
 
 export const ScribePortalContext = createContext<ScribePortalContextType | null>(null)

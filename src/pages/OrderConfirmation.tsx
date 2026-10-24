@@ -3,7 +3,7 @@
  * Shown after a successful mock payment.  Displays the order ID and next steps.
  */
 
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, Link } from 'react-router-dom'
 import { useOrder } from '../lib/orderStore'
 import { inr } from '../lib/pricing'
 import { quote } from '../lib/pricing'
@@ -76,9 +76,14 @@ export default function OrderConfirmation() {
         <button className="btn btn-ghost" onClick={() => nav('/')} id="confirm-home-btn">
           ← Back to home
         </button>
-        <button className="btn btn-primary" onClick={onNewOrder} id="confirm-new-btn">
-          Place another order
-        </button>
+        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+          <Link className="btn btn-primary" to={`/track/${state.orderId}`} id="confirm-track-btn">
+            Track this order
+          </Link>
+          <button className="btn btn-ghost" onClick={onNewOrder} id="confirm-new-btn">
+            Place another order
+          </button>
+        </div>
       </div>
     </div>
   )

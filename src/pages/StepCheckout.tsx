@@ -11,14 +11,17 @@ import { useNavigate } from 'react-router-dom'
 import { useOrder, MOCK_SCRIBES } from '../lib/orderStore'
 import { quote, inr, formatDuration } from '../lib/pricing'
 import { createUpiPaymentIntent, verifyUpiPayment, type UpiPaymentIntent } from '../backend/paymentGateway'
+import { useScribePortal, type TrackableOrder } from '../lib/scribeStore'
+import { randomDigits, randomToken } from '../shared/random'
 
 function genOrderId(): string {
-  return 'SL-' + Math.random().toString(36).slice(2, 8).toUpperCase()
+  return 'SL-' + randomToken(3)
 }
 
 export default function StepCheckout() {
   const { state, dispatch } = useOrder()
   const nav = useNavigate()
+  const { addOrder } = useScribePortal()
 
   const [upi, setUpi] = useState(state.upiId || 'student@okaxis')
   const [paymentIntent, setPaymentIntent] = useState<UpiPaymentIntent | null>(null)
@@ -39,6 +42,36 @@ export default function StepCheckout() {
     ballpoint: 'Ballpoint',
     gel: 'Gel',
     fountain: 'Fountain',
+  }
+
+  /** The paid order, in the shape the tracker and the scribe dashboard read. */
+  function buildTrackableOrder(orderId: string): TrackableOrder {
+    const addons = [
+      state.simpleDrawings > 0 && `${state.simpleDrawings} Simple Diagram${state.simpleDrawings > 1 ? 's' : ''}`,
+      state.complexDrawings > 0 && `${state.complexDrawings} Complex Diagram${state.complexDrawings > 1 ? 's' : ''}`,
+      state.graphs > 0 && `${state.graphs} Graph${state.graphs > 1 ? 's' : ''}`,
+      state.customTemplate && 'College Template',
+      q.pages >= 20 && 'Rigid Packaging',
+    ].filter((a): a is string => Boolean(a))
+    const due = new Date(Date.now() + q.turnaroundHours * 3600 * 1000)
+    return {
+      id: orderId,
+      title: (state.doc?.name ?? 'Untitled document').replace(/\.[^.]+$/, ''),
+      subject: scribe?.specialty ?? 'General',
+      customerName: 'Anonymous student',
+      status: 'Paid',
+      pages: q.pages,
+      words: state.words,
+      addons,
+      penStyle: `${penLabels[state.pen]} · ${state.ink === 'blue' ? 'Blue' : 'Black'}`,
+      customerPaid: q.customerTotal,
+      scribePayout: q.scribeTotal,
+      distanceKm: 1,
+      createdAt: 'Just now',
+      deadlineAt: due.toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }),
+      otp: randomDigits(6),
+      timeline: [{ status: 'Paid', timestamp: 'Just now', note: 'Escrow payment confirmed. Waiting for a scribe to accept.' }],
+    }
   }
 
   function validateUpi(v: string) {
@@ -63,6 +96,7 @@ export default function StepCheckout() {
       verifyUpiPayment(intent.paymentId, true)
       dispatch({ type: 'SET_UPI', upiId: upi })
       dispatch({ type: 'PLACE_ORDER', orderId })
+      addOrder(buildTrackableOrder(orderId))
       setPaying(false)
       nav('/order/confirmation')
     }, 2200)

@@ -17,6 +17,8 @@ export default function ScribeDashboard() {
   const [checkinNote, setCheckinNote] = useState('')
   const [activeCheckinOrder, setActiveCheckinOrder] = useState<string | null>(null)
 
+  const [otpEntry, setOtpEntry] = useState<Record<string, string>>({})
+  const [otpError, setOtpError] = useState('')
   const pendingOrders = orders.filter(o => o.status === 'Paid')
   const activeOrders = orders.filter(o => ['Accepted', 'Writing', 'Dispatched'].includes(o.status))
 
@@ -183,12 +185,27 @@ export default function ScribeDashboard() {
                     {order.status === 'Dispatched' && (
                       <div className="dispatched-box">
                         <p style={{ fontSize: 14 }}>
-                          Courier is transporting package to campus gate. <strong>Delivery OTP: {order.otp}</strong>
+                          Courier is transporting the package to the campus gate. At handover, the customer reads you the
+                          <strong> 6-digit delivery code</strong> shown in their tracker. Enter it to complete delivery.
                         </p>
                         <div className="card-actions" style={{ marginTop: 12 }}>
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            maxLength={6}
+                            placeholder="6-digit code"
+                            aria-label="Delivery code from the customer"
+                            value={otpEntry[order.id] ?? ''}
+                            onChange={e => { setOtpEntry(prev => ({ ...prev, [order.id]: e.target.value.replace(/\D/g, '') })); setOtpError('') }}
+                            style={{ width: 150 }}
+                          />
                           <button
                             className="btn btn-primary"
-                            onClick={() => advanceOrderStatus(order.id, 'Delivered', 'Gate delivery confirmed by courier photo & OTP match.')}
+                            disabled={(otpEntry[order.id] ?? '').length !== 6}
+                            onClick={() => {
+                              if ((otpEntry[order.id] ?? '') !== order.otp) { setOtpError('That code does not match. Ask the customer to read it again.'); return }
+                              advanceOrderStatus(order.id, 'Delivered', 'Gate delivery confirmed by delivery code match.')
+                            }}
                           >
                             Confirm Gate Delivery
                           </button>
@@ -196,6 +213,7 @@ export default function ScribeDashboard() {
                             Audit Trail
                           </Link>
                         </div>
+                        {otpError && <p className="alert alert--warn" role="alert" style={{ marginTop: 8 }}>{otpError}</p>}
                       </div>
                     )}
                   </div>
