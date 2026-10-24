@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { quote, inr, formatDuration, RATES } from '../lib/pricing'
 
 function Stepper({ label, hint, value, onChange }: {
@@ -92,9 +93,7 @@ export default function Calculator() {
                 <div><span>Platform fee</span><strong>{inr(q.platformTotal)}</strong></div>
               </div>
             )}
-            <button type="button" className="btn btn-primary full" disabled title="Ordering opens in Phase 2">
-              Start order (coming in Phase 2)
-            </button>
+            <Link className="btn btn-primary full" to="/order/upload">Start order</Link>
             {template && (
               <p className="stepper-hint">Template printing assumes ₹{RATES.templatePrintCostPerSheet}/sheet print cost.</p>
             )}

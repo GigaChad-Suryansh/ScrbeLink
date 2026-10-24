@@ -38,7 +38,7 @@ Each phase ends with something you can run and demo. Later phases build on earli
 - Admin panel: verify handwriting cards, review disputes, manage strikes
 - WhatsApp / SMS notifications
 
-## Phase 7: Quality, security and launch
+## Phase 7: Quality, security and launch (done, apart from real hosting and a pilot)
 - Automated tests (pricing, state machine, payouts), CI on GitHub Actions
 - Rate limiting, input validation, file-upload scanning
 - Deploy (front end on Vercel/Netlify, API and DB on a managed host)

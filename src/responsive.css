@@ -6,3 +6,22 @@
   .dash-quick-stats { flex-wrap: wrap; }
   [class*='-tabs'], [class*='tab-bar'] { overflow-x: auto; max-width: 100%; }
 }
+
+/* ── Theme fixes: older page styles used fixed light colours ───────────── */
+
+/* Handwriting sample cards are paper, so their text stays ink-on-paper in every theme */
+.sample-card-preview, .sample-card-preview :where(div, span, p, strong, small) { color: #1b2a6b; }
+.sample-card-preview a { color: #0057ad; }
+
+@media (prefers-color-scheme: dark) {
+  .urgent-action-card { background: linear-gradient(135deg, rgba(255, 159, 10, 0.16), rgba(255, 159, 10, 0.08)); border-color: rgba(255, 159, 10, 0.35); }
+  .urgent-badge { background: #ffb257; color: #2b1700; }
+  .urgent-content h3 { color: #ffd9a3; }
+  .urgent-content p { color: #f0c58a; }
+  .metric-num--warn { color: var(--warn); }
+  .escrow-badge { color: var(--warn); background: var(--warn-soft); }
+  .checkin-alert { background: rgba(217, 70, 239, 0.14); color: #f0b4fa; border-color: rgba(217, 70, 239, 0.35); }
+  .otp-alert { background: rgba(255, 159, 10, 0.14); color: #ffc98a; border-color: rgba(255, 159, 10, 0.35); }
+  .delivered-alert, .alert--ok { background: rgba(76, 214, 148, 0.13); color: #8be8bb; border-color: rgba(76, 214, 148, 0.35); }
+  .alert--warn { background: var(--warn-soft); color: var(--warn); border-color: rgba(255, 159, 10, 0.35); }
+}

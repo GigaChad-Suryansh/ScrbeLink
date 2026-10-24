@@ -22,6 +22,8 @@ import {
 // Landing page components (Phase 1)
 import Calculator from './components/Calculator'
 import { HowItWorks, Rules, Footer } from './components/Sections'
+import Icon from './components/Icons'
+import Reveal from './components/Reveal'
 
 // Order wizard (Phase 2)
 import WizardLayout from './components/WizardLayout'
@@ -54,61 +56,61 @@ function LandingPage() {
       <header className="nav">
         <div className="container nav-inner">
           <Link to="/" className="logo">Scribe<span>Link</span></Link>
-          <nav>
+          <nav aria-label="Primary">
             <a href="#how">How it works</a>
             <a href="#price">Pricing</a>
             <a href="#rules">Rules</a>
-            <Link to="/track">Track Order</Link>
-            <Link to="/dispute">Dispute</Link>
-            <Link to="/scribe/dashboard" style={{ color: 'var(--brand)', fontWeight: 600 }}>
-              Scribe Portal
-            </Link>
-            <Link to="/admin" style={{ color: '#b45309', fontWeight: 600 }}>
-              Admin ➔
-            </Link>
+            <Link to="/track">Track order</Link>
+            <Link to="/scribe/dashboard">Scribe portal</Link>
+            <Link to="/order/upload" className="nav-cta">Place an order</Link>
           </nav>
         </div>
       </header>
 
       <main id="top">
         <section className="hero">
-          <div className="container hero-grid">
-            <div>
-              <p className="eyebrow">Peer-to-peer handwriting marketplace</p>
-              <h1>Your finished notes, written by hand and delivered to your gate.</h1>
-              <p className="hero-sub">
-                Upload your final text and diagrams. Pick a verified peer scribe by their handwriting
-                sample. Get neat, uniform pages couriered to you. Fixed price per page.
-              </p>
-              <div className="hero-cta">
-                <Link className="btn btn-primary" to="/order/upload">Place an order</Link>
-                <Link className="btn btn-ghost" to="/track">Track active order</Link>
-                <Link className="btn btn-ghost" to="/scribe/dashboard">Become / Open Scribe Partner</Link>
+          <div className="container">
+            <span className="hero-pill"><i aria-hidden="true" />Peer-to-peer handwriting marketplace</span>
+            <h1>Your notes, <span className="grad">written by hand.</span></h1>
+            <p className="hero-sub">
+              Upload your finished text. Choose a verified scribe by their handwriting. Neat pages arrive at your gate.
+            </p>
+            <div className="hero-cta">
+              <Link className="btn btn-primary" to="/order/upload">Place an order</Link>
+              <a className="text-link" href="#price">See pricing <Icon name="arrow" size={18} /></a>
+            </div>
+
+            <div className="stage">
+              <div className="paper" aria-hidden="true">
+                <div className="paper-margin" />
+                <p className="scribble">Newton's second law states that the net force on a body equals the rate of change of its momentum…</p>
+                <p className="scribble">F = ma</p>
+                <p className="paper-tag">Sample card · Scribe #S-2041</p>
               </div>
-              <ul className="hero-points">
-                <li>₹30 per page</li>
-                <li>Escrow-protected payment</li>
-                <li>No chat, no contact: fully anonymous</li>
-              </ul>
+              <span className="chip c1"><Icon name="tag" size={18} />₹30 per page</span>
+              <span className="chip c2"><Icon name="shield" size={18} />Escrow protected</span>
+              <span className="chip c3"><Icon name="eyeOff" size={18} />Fully anonymous</span>
             </div>
-            <div className="paper" aria-hidden="true">
-              <div className="paper-margin" />
-              <p className="scribble">Newton's second law states that the net force on a body equals the rate of change of its momentum…</p>
-              <p className="scribble">F = ma</p>
-              <p className="paper-tag">Sample card · Scribe #S-2041</p>
-            </div>
+          </div>
+        </section>
+
+        <section className="facts-strip" aria-label="At a glance">
+          <div className="container facts-grid">
+            <Reveal className="fact"><b>₹30</b><span>per page, fixed</span></Reveal>
+            <Reveal className="fact" delay={80}><b>24h</b><span>escrow window</span></Reveal>
+            <Reveal className="fact" delay={160}><b>0</b><span>direct contact</span></Reveal>
           </div>
         </section>
 
         <HowItWorks />
 
-        <section id="price" className="alt">
+        <section id="price">
           <div className="container">
-            <p className="eyebrow">Pricing</p>
-            <h2 className="section-title">See your price before you commit</h2>
-            <p className="section-sub">
-              One standard page is about 200 words. Add diagrams and graphs, and the total updates live.
-            </p>
+            <Reveal className="head">
+              <p className="eyebrow">Pricing</p>
+              <h2 className="section-title">See your price before you commit.</h2>
+              <p className="section-sub">One standard page is about 200 words. Add diagrams and graphs, and the total updates live.</p>
+            </Reveal>
             <Calculator />
           </div>
         </section>
