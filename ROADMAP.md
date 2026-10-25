@@ -44,6 +44,18 @@ Each phase ends with something you can run and demo. Later phases build on earli
 - Deploy (front end on Vercel/Netlify, API and DB on a managed host)
 - Pilot with one campus
 
+## Phase 8: Connect the web app to the API (done)
+- Phone and code sign-in per role; the web app no longer uses mock data
+- Orders are created Draft, become Paid when the UPI test payment succeeds
+- Scribes sign up, upload a handwriting photo, and work only after admin approval
+- Delivery code is shown to the customer only; the scribe must type it to deliver
+- Evidence videos and sample photos are stored by the API; payouts and withdrawals come from the escrow ledger
+
+## Next
+- Replace in-memory storage with PostgreSQL and persistent file storage
+- Real providers: SMS for codes, UPI gateway, courier
+- Pilot with one campus
+
 ## Open questions to settle early
 - Real printing cost per sheet for the custom template add-on (assumed ₹2 in Phase 1)
 - How cover-page detection will work (OCR heuristics vs manual review)

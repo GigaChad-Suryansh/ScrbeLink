@@ -100,6 +100,10 @@ export class OrderStateMachineScheduler {
     return true
   }
 
+  getEscrowRecordsFor(scribeId: string): ManagedEscrowRecord[] {
+    return this.escrowRecords.filter(r => r.scribeId === scribeId)
+  }
+
   getEscrowRecord(orderId: string): ManagedEscrowRecord | undefined {
     return this.escrowRecords.find(r => r.orderId === orderId)
   }

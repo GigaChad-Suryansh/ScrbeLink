@@ -60,4 +60,8 @@ export interface AdminScribeApproval {
   isApproved: boolean
   strikes: number
   isSuspended: boolean
+  /** Fields below exist for scribes who signed up themselves. */
+  phone?: string
+  upiVpa?: string
+  specialties?: string[]
 }

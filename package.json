@@ -4,14 +4,16 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "node scripts/dev.mjs",
     "server": "tsx src/backend/server.ts",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview",
     "check": "npm run lint && npm test",
     "test": "node --import tsx --test --test-reporter=spec \"src/**/*.test.ts\"",
-    "start": "tsx src/backend/server.ts"
+    "start": "tsx src/backend/server.ts",
+    "dev:web": "vite",
+    "dev:api": "node --env-file=dev.env --import tsx src/backend/server.ts"
   },
   "dependencies": {
     "cors": "^2.8.6",

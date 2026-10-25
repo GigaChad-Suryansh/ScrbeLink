@@ -1,33 +1,43 @@
 /**
  * StepScribe.tsx  –  Step 3 of the order wizard
- * Shows mock scribe cards with handwriting samples; user picks one.
+ * Lists the approved scribes from the API with their handwriting sample; the customer picks one,
+ * or lets any approved scribe take the order.
  */
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useOrder, MOCK_SCRIBES } from '../lib/orderStore'
+import { useOrder } from '../lib/orderStore'
+import { api } from '../lib/api'
 
-function Stars({ n }: { n: number }) {
-  return (
-    <span aria-label={`${n} stars`} className="scribe-stars">
-      {'★'.repeat(Math.floor(n))}{'☆'.repeat(5 - Math.floor(n))}
-    </span>
-  )
+interface PublicScribe {
+  id: string
+  name: string
+  college: string
+  specialties: string[]
+  sample: string
+  sampleImageUrl?: string
+  completedOrders: number
+  available: boolean
 }
 
 export default function StepScribe() {
   const { state, dispatch } = useOrder()
   const nav = useNavigate()
-  const [selected, setSelected] = useState<string | null>(state.scribeId)
+  const [scribes, setScribes] = useState<PublicScribe[] | null>(null)
+  const [error, setError] = useState('')
+  /** 'any' lets the first approved scribe who sees the order accept it. */
+  const [selected, setSelected] = useState<string>(state.scribeId ?? 'any')
+
+  useEffect(() => {
+    api<{ scribes: PublicScribe[] }>('GET', '/api/scribes')
+      .then((r) => setScribes(r.scribes))
+      .catch((e: Error) => setError(e.message))
+  }, [])
 
   function onNext() {
-    if (!selected) return
-    dispatch({ type: 'SET_SCRIBE', scribeId: selected })
+    const pick = scribes?.find((s) => s.id === selected)
+    dispatch({ type: 'SET_SCRIBE', scribeId: pick ? pick.id : null, scribeName: pick ? pick.name : null })
     nav('/order/checkout')
-  }
-
-  function onBack() {
-    nav('/order/addons')
   }
 
   return (
@@ -36,57 +46,73 @@ export default function StepScribe() {
       <h2 className="section-title">Pick your scribe</h2>
       <p className="section-sub" style={{ marginBottom: 28 }}>
         Each card shows a real handwriting sample. All scribes are verified by ScribeLink.
-        Your order is fully anonymous — the scribe never sees your name.
+        Your order is fully anonymous: the scribe never sees your name.
       </p>
 
-      <div className="scribe-grid">
-        {MOCK_SCRIBES.map(s => (
+      {error && <div className="alert alert--warn" role="alert">{error}</div>}
+      {!scribes && !error && <p className="section-sub">Loading scribes…</p>}
+
+      {scribes && (
+        <div className="scribe-grid">
           <button
-            key={s.id}
-            id={`scribe-${s.id}`}
-            className={`scribe-card card${selected === s.id ? ' scribe-card--active' : ''}${!s.available ? ' scribe-card--busy' : ''}`}
-            onClick={() => s.available && setSelected(s.id)}
-            disabled={!s.available}
-            aria-pressed={selected === s.id}
-            aria-label={`Select scribe ${s.name}`}
+            id="scribe-any"
+            className={`scribe-card card${selected === 'any' ? ' scribe-card--active' : ''}`}
+            onClick={() => setSelected('any')}
+            aria-pressed={selected === 'any'}
+            aria-label="Any approved scribe"
           >
-            {/* Badge */}
-            {!s.available && <span className="scribe-badge scribe-badge--busy">Busy</span>}
-            {selected === s.id && <span className="scribe-badge scribe-badge--selected">✓ Selected</span>}
-
+            {selected === 'any' && <span className="scribe-badge scribe-badge--selected">✓ Selected</span>}
             <div className="scribe-header">
-              <div className="scribe-avatar" aria-hidden="true">
-                {s.name[0]}
-              </div>
+              <div className="scribe-avatar" aria-hidden="true">★</div>
               <div>
-                <p className="scribe-name">{s.name}</p>
-                <p className="scribe-tag">#{s.tag} · {s.specialty}</p>
+                <p className="scribe-name">Any approved scribe</p>
+                <p className="scribe-tag">Fastest match</p>
               </div>
             </div>
-
-            <div className="scribe-meta">
-              <Stars n={s.rating} />
-              <span className="scribe-meta-txt">{s.rating} · {s.ordersCompleted} orders</span>
-            </div>
-
-            {/* Handwriting sample */}
-            <div className="paper scribe-sample" aria-label="Handwriting sample">
-              <div className="paper-margin" />
-              <p className="scribble">{s.sample}</p>
-              <p className="paper-tag">Sample · {s.tag}</p>
-            </div>
+            <p className="scribe-meta-txt" style={{ marginTop: 12 }}>
+              The first verified scribe who is free accepts your order. {scribes.length === 0 && 'No scribe has been approved yet, so your order will wait in the queue.'}
+            </p>
           </button>
-        ))}
-      </div>
+
+          {scribes.map((s) => (
+            <button
+              key={s.id}
+              id={`scribe-${s.id}`}
+              className={`scribe-card card${selected === s.id ? ' scribe-card--active' : ''}${!s.available ? ' scribe-card--busy' : ''}`}
+              onClick={() => s.available && setSelected(s.id)}
+              disabled={!s.available}
+              aria-pressed={selected === s.id}
+              aria-label={`Select scribe ${s.name}`}
+            >
+              {!s.available && <span className="scribe-badge scribe-badge--busy">Busy</span>}
+              {selected === s.id && <span className="scribe-badge scribe-badge--selected">✓ Selected</span>}
+
+              <div className="scribe-header">
+                <div className="scribe-avatar" aria-hidden="true">{s.name[0]}</div>
+                <div>
+                  <p className="scribe-name">{s.name}</p>
+                  <p className="scribe-tag">#{s.id} · {s.specialties[0] ?? s.college}</p>
+                </div>
+              </div>
+
+              <div className="scribe-meta">
+                <span className="scribe-meta-txt">{s.completedOrders} orders completed</span>
+              </div>
+
+              <div className="paper scribe-sample" aria-label="Handwriting sample">
+                <div className="paper-margin" />
+                {s.sampleImageUrl && <img src={s.sampleImageUrl} alt={`Handwriting sample by ${s.name}`} style={{ maxHeight: 110, borderRadius: 8, marginBottom: 6 }} />}
+                <p className="scribble">{s.sample}</p>
+                <p className="paper-tag">Sample · {s.id}</p>
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
 
       <div className="wizard-nav">
-        <button className="btn btn-ghost" onClick={onBack} id="scribe-back-btn">← Back</button>
-        <button
-          className="btn btn-primary"
-          onClick={onNext}
-          disabled={!selected}
-          id="scribe-next-btn"
-        >
+        <button className="btn btn-ghost" onClick={() => nav('/order/addons')} id="scribe-back-btn">← Back</button>
+        <button className="btn btn-primary" onClick={onNext} disabled={!scribes} id="scribe-next-btn">
           Next: Review &amp; pay →
         </button>
       </div>

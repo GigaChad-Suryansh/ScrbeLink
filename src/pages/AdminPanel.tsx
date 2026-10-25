@@ -7,38 +7,97 @@
  * 4. WhatsApp & SMS Live Telemetry Log
  */
 
-import { useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { globalLogistics } from '../backend/logisticsService'
 import type { AdminScribeApproval, DisputeRecord, NotificationLog } from '../shared/logisticsDisputes'
+import { api, fetchBlobUrl } from '../lib/api'
 import { inr } from '../lib/pricing'
 
+type Tab = 'cards' | 'disputes' | 'strikes' | 'notifications'
+
+/** Plays a protected evidence video: it is fetched with the admin's token, then shown from a blob URL. */
+function EvidenceVideo({ url }: { url: string }) {
+  const [src, setSrc] = useState('')
+  const [error, setError] = useState('')
+  const isLocal = url.startsWith('/api/media/')
+  useEffect(() => () => { if (src) URL.revokeObjectURL(src) }, [src])
+  if (!isLocal) return <a href={url} target="_blank" rel="noreferrer noopener" className="btn btn-ghost sm">Open video link</a>
+  return src ? (
+    <video src={src} controls style={{ width: '100%', borderRadius: 10, marginTop: 8 }} />
+  ) : (
+    <>
+      <button className="btn btn-ghost sm" style={{ marginTop: 8 }} onClick={() => fetchBlobUrl(url, 'admin').then(setSrc).catch((e: Error) => setError(e.message))}>
+        ▶ Load unboxing video
+      </button>
+      {error && <p role="alert" style={{ color: 'var(--warn)', fontSize: 13 }}>{error}</p>}
+    </>
+  )
+}
+
 export default function AdminPanel() {
-  const [scribes, setScribes] = useState<AdminScribeApproval[]>(globalLogistics.getAllScribes())
-  const [disputes, setDisputes] = useState<DisputeRecord[]>(globalLogistics.getAllDisputes())
-  const [notifications, setNotifications] = useState<NotificationLog[]>(globalLogistics.getNotificationLogs())
-  const [activeTab, setActiveTab] = useState<'cards' | 'disputes' | 'strikes' | 'notifications'>('cards')
+  const [scribes, setScribes] = useState<AdminScribeApproval[]>([])
+  const [disputes, setDisputes] = useState<DisputeRecord[]>([])
+  const [notifications, setNotifications] = useState<NotificationLog[]>([])
+  const [activeTab, setActiveTab] = useState<Tab>('cards')
+  const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
+  const [adminNote, setAdminNote] = useState('')
+  const [demoMode, setDemoMode] = useState(false)
 
-  function handleVerifyCard(scribeId: string, approved: boolean) {
-    const updated = globalLogistics.verifyScribeCard(scribeId, approved)
-    setScribes(globalLogistics.getAllScribes())
-    alert(`Handwriting sample card for ${updated.name} has been ${approved ? 'APPROVED' : 'REJECTED'}.`)
-  }
+  const load = useCallback(async () => {
+    try {
+      const [s, d, n] = await Promise.all([
+        api<{ scribes: AdminScribeApproval[] }>('GET', '/api/admin/scribes', { as: 'admin' }),
+        api<{ disputes: DisputeRecord[] }>('GET', '/api/admin/disputes', { as: 'admin' }),
+        api<{ notifications: NotificationLog[] }>('GET', '/api/admin/notifications', { as: 'admin' }),
+      ])
+      setScribes(s.scribes)
+      setDisputes(d.disputes)
+      setNotifications(n.notifications)
+      setError('')
+    } catch (e) {
+      setError((e as Error).message)
+    }
+  }, [])
 
-  function handleStrike(scribeId: string, delta: number) {
-    const updated = globalLogistics.manageScribeStrike(scribeId, delta)
-    setScribes(globalLogistics.getAllScribes())
-    if (updated.isSuspended) {
-      alert(`⚠️ Scribe ${updated.name} now has ${updated.strikes} strikes and is automatically SUSPENDED.`)
+  useEffect(() => {
+    // oxlint-disable-next-line react/set-state-in-effect -- loads data from the API on mount; state is set after the request resolves
+    void load()
+    const id = setInterval(() => { if (!document.hidden) void load() }, 8000)
+    api<{ production: boolean }>('GET', '/api/health').then((h) => setDemoMode(!h.production)).catch(() => {})
+    return () => clearInterval(id)
+  }, [load])
+
+  /** Runs one admin action, then reloads the lists. */
+  async function act(fn: () => Promise<unknown>, done: string) {
+    setError('')
+    setNotice('')
+    try {
+      await fn()
+      setNotice(done)
+      await load()
+    } catch (e) {
+      setError((e as Error).message)
     }
   }
 
-  function handleResolveDispute(disputeId: string, decision: 'REFUNDED_TO_CUSTOMER' | 'RELEASED_TO_SCRIBE' | 'SPLIT') {
-    const reason = prompt('Enter Admin Resolution Audit Note:') || 'Resolved following unboxing video review.'
-    globalLogistics.resolveDispute(disputeId, decision, reason)
-    setDisputes(globalLogistics.getAllDisputes())
-    setNotifications(globalLogistics.getNotificationLogs())
-  }
+  const handleVerifyCard = (id: string, approved: boolean) =>
+    act(() => api('POST', `/api/admin/scribes/${id}/verify`, { as: 'admin', body: { isApproved: approved } }), approved ? 'Card approved.' : 'Card rejected.')
+
+  const handleStrike = (id: string, delta: number) =>
+    act(() => api('POST', `/api/admin/scribes/${id}/strikes`, { as: 'admin', body: { delta } }), delta > 0 ? 'Strike issued.' : 'Strike pardoned.')
+
+  const handleResolveDispute = (id: string, decision: 'REFUNDED_TO_CUSTOMER' | 'RELEASED_TO_SCRIBE' | 'SPLIT') =>
+    act(
+      () => api('POST', `/api/admin/disputes/${id}/resolve`, { as: 'admin', body: { decision, adminNotes: adminNote.trim() || 'Resolved after reviewing the unboxing video.' } }).then(() => setAdminNote('')),
+      'Dispute resolved.',
+    )
+
+  const fastForward = () =>
+    act(
+      () => api('POST', '/api/cron/trigger-jobs', { as: 'admin', body: { simulatedTimestamp: new Date(Date.now() + 25 * 3600 * 1000).toISOString() } }),
+      'Jumped 25 hours ahead: due escrow was released and missed check-ins were handled.',
+    )
 
   return (
     <div className="admin-page">
@@ -55,6 +114,15 @@ export default function AdminPanel() {
           ← Return to Portal
         </Link>
       </div>
+
+      {error && <div className="alert alert--warn" role="alert" style={{ marginBottom: 12 }}>{error}</div>}
+      {notice && <div className="alert alert--ok" role="status" style={{ marginBottom: 12 }}>{notice}</div>}
+      {demoMode && (
+        <div className="card" style={{ padding: 14, marginBottom: 16, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 14, color: 'var(--muted)', flex: 1 }}>Demo tool: payouts normally release 24 hours after delivery.</span>
+          <button className="btn btn-ghost sm" onClick={fastForward} id="fast-forward-btn">Fast-forward 25 hours</button>
+        </div>
+      )}
 
       {/* Admin Subnav Tabs */}
       <div className="admin-tabs">
@@ -78,10 +146,7 @@ export default function AdminPanel() {
         </button>
         <button
           className={`admin-tab-btn ${activeTab === 'notifications' ? 'tab-btn--active' : ''}`}
-          onClick={() => {
-            setNotifications(globalLogistics.getNotificationLogs())
-            setActiveTab('notifications')
-          }}
+          onClick={() => setActiveTab('notifications')}
         >
           📲 WhatsApp / SMS Gateway Logs ({notifications.length})
         </button>
@@ -91,6 +156,7 @@ export default function AdminPanel() {
       {activeTab === 'cards' && (
         <div className="admin-card-section">
           <h2>Pending &amp; Verified Scribe Cards</h2>
+          {scribes.length === 0 && <div className="card empty-state" style={{ marginTop: 16 }}><p>No scribes have signed up yet.</p></div>}
           <div className="scribe-cards-grid" style={{ marginTop: 16 }}>
             {scribes.map(s => (
               <div key={s.scribeId} className="card admin-scribe-card">
@@ -108,6 +174,7 @@ export default function AdminPanel() {
 
                 <div className="paper" style={{ padding: '16px 16px 36px 44px', margin: '14px 0', transform: 'none' }}>
                   <div className="paper-margin" />
+                  {s.handwritingSampleUrl && <img src={s.handwritingSampleUrl} alt={`Handwriting sample by ${s.name}`} style={{ maxWidth: '100%', maxHeight: 160, borderRadius: 8, marginBottom: 8 }} />}
                   <p className="scribble font-caveat">{s.sampleCardText}</p>
                   <div className="paper-tag">Sample #{s.tag}</div>
                 </div>
@@ -143,6 +210,7 @@ export default function AdminPanel() {
           </p>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginTop: 18 }}>
+            {disputes.length === 0 && <div className="card empty-state"><p>No disputes have been filed.</p></div>}
             {disputes.map(disp => (
               <div key={disp.id} className="card dispute-card">
                 <div className="dispute-top">
@@ -166,14 +234,14 @@ export default function AdminPanel() {
 
                   <div className="video-proof-box">
                     <strong>📹 Unboxing Video Evidence:</strong>
-                    <div className="video-player-sim">
-                      <span>▶ Play {disp.orderId}_unboxing_proof.mp4</span>
-                    </div>
+                    <EvidenceVideo url={disp.unboxingVideoUrl} />
                   </div>
                 </div>
 
                 {disp.status === 'PENDING_REVIEW' ? (
                   <div className="dispute-actions" style={{ marginTop: 16, borderTop: '1px solid var(--line)', paddingTop: 14 }}>
+                    <label htmlFor={`note-${disp.id}`} style={{ fontSize: 13, fontWeight: 600, color: 'var(--muted)' }}>Audit note (saved with the decision)</label>
+                    <input id={`note-${disp.id}`} type="text" value={adminNote} onChange={e => setAdminNote(e.target.value)} placeholder="Why this decision?" style={{ width: '100%', margin: '6px 0 10px' }} />
                     <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--muted)' }}>Arbitration Decision:</span>
                     <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
                       <button
@@ -265,6 +333,7 @@ export default function AdminPanel() {
           <h2>Outbound WhatsApp &amp; SMS Gateway Feed</h2>
           <div className="card" style={{ marginTop: 16 }}>
             <div className="timeline-list" style={{ padding: 20 }}>
+              {notifications.length === 0 && <p style={{ color: 'var(--muted)' }}>No messages sent yet.</p>}
               {notifications.map(n => (
                 <div key={n.id} className="timeline-item">
                   <div className="timeline-dot" />

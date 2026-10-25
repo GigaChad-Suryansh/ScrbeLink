@@ -13,13 +13,25 @@ import { useScribePortal } from '../lib/scribeStore'
 import { inr } from '../lib/pricing'
 
 export default function ScribeDashboard() {
-  const { profile, orders, acceptOrder, advanceOrderStatus, submitCheckIn } = useScribePortal()
+  const { profile, orders, loading, loadError, acceptOrder, startWriting, submitCheckIn, dispatchOrder, confirmDelivery } = useScribePortal()
   const [checkinNote, setCheckinNote] = useState('')
   const [activeCheckinOrder, setActiveCheckinOrder] = useState<string | null>(null)
 
   const [otpEntry, setOtpEntry] = useState<Record<string, string>>({})
   const [otpError, setOtpError] = useState('')
-  const pendingOrders = orders.filter(o => o.status === 'Paid')
+  const [busyId, setBusyId] = useState<string | null>(null)
+  const [actionError, setActionError] = useState('')
+  const pendingOrders = orders.filter(o => o.status === 'Paid' || o.status === 'Reassigned')
+
+  /** Runs an action, shows its error (if any), and blocks double clicks on that order. */
+  async function act(orderId: string, fn: () => Promise<string | null>, onError: (m: string) => void = setActionError) {
+    setBusyId(orderId)
+    onError('')
+    const err = await fn()
+    setBusyId(null)
+    if (err) onError(err)
+    return !err
+  }
   const activeOrders = orders.filter(o => ['Accepted', 'Writing', 'Dispatched'].includes(o.status))
 
   return (
@@ -28,9 +40,11 @@ export default function ScribeDashboard() {
       <div className="scribe-dash-header">
         <div>
           <span className="eyebrow">Scribe Partner Workspace</span>
-          <h1 className="section-title">Welcome back, {profile.name} 👋</h1>
+          <h1 className="section-title">{profile.name ? `Welcome back, ${profile.name}` : 'Welcome to ScribeLink'}</h1>
           <p className="section-sub">
-            Campus: <strong>{profile.college}</strong> · Rating: ★ {profile.rating} ({profile.totalOrders} completed)
+            {profile.registered
+              ? <>Campus: <strong>{profile.college}</strong> · {profile.totalOrders} completed</>
+              : 'Set up your profile and handwriting card to start receiving orders.'}
           </p>
         </div>
 
@@ -48,6 +62,24 @@ export default function ScribeDashboard() {
           </Link>
         </div>
       </div>
+
+      {loadError && <div className="alert alert--warn" role="alert" style={{ marginBottom: 16 }}>{loadError}</div>}
+      {actionError && <div className="alert alert--warn" role="alert" style={{ marginBottom: 16 }}>{actionError}</div>}
+      {!loading && !profile.registered && (
+        <div className="alert alert--warn" style={{ marginBottom: 16 }}>
+          You have not set up your scribe profile yet. <Link to="/scribe/onboarding"><strong>Complete it now</strong></Link> so an admin can approve your handwriting card.
+        </div>
+      )}
+      {!loading && profile.registered && !profile.isApproved && !profile.isSuspended && (
+        <div className="alert alert--warn" style={{ marginBottom: 16 }}>
+          Your handwriting card is waiting for admin approval. New orders will appear here once you are approved.
+        </div>
+      )}
+      {profile.isSuspended && (
+        <div className="alert alert--warn" role="alert" style={{ marginBottom: 16 }}>
+          Your account is suspended after repeated missed check-ins. Contact support.
+        </div>
+      )}
 
       {/* Intake / Rush Check-in Alert Banner */}
       {activeOrders.some(o => o.status === 'Accepted' || o.status === 'Writing') && (
@@ -109,7 +141,7 @@ export default function ScribeDashboard() {
                     {order.status === 'Accepted' && (
                       <div className="intake-inspection-box">
                         <div className="inspection-timer">
-                          ⏳ <strong>30-Minute Intake Inspection:</strong> 18 mins left to confirm or flag quality.
+                          ⏳ <strong>30-Minute Intake Inspection:</strong> {order.intakeInspectionExpiresAt ?? 'in progress'} to confirm or flag quality.
                         </div>
                         <p style={{ fontSize: 13, color: 'var(--muted)', marginTop: 4 }}>
                           Review the customer's text. Ensure no illicit cover pages or mismatched diagram requirements.
@@ -117,13 +149,11 @@ export default function ScribeDashboard() {
                         <div className="card-actions" style={{ marginTop: 12 }}>
                           <button
                             className="btn btn-primary"
-                            onClick={() => advanceOrderStatus(order.id, 'Writing', '30-minute intake inspection passed. Writing initiated.')}
+                            disabled={busyId === order.id}
+                            onClick={() => act(order.id, () => startWriting(order.id))}
                           >
                             ✓ Confirm Intake &amp; Start Writing
                           </button>
-                          <Link to={`/track/${order.id}`} className="btn btn-ghost">
-                            View Customer View
-                          </Link>
                         </div>
                       </div>
                     )}
@@ -146,11 +176,12 @@ export default function ScribeDashboard() {
                             <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
                               <button
                                 className="btn btn-primary"
-                                onClick={() => {
-                                  submitCheckIn(order.id)
-                                  advanceOrderStatus(order.id, 'Writing', checkinNote ? `Check-in update: ${checkinNote}` : 'Hourly check-in snapshot verified.')
-                                  setCheckinNote('')
-                                  setActiveCheckinOrder(null)
+                                disabled={busyId === order.id}
+                                onClick={async () => {
+                                  if (await act(order.id, () => submitCheckIn(order.id, checkinNote))) {
+                                    setCheckinNote('')
+                                    setActiveCheckinOrder(null)
+                                  }
                                 }}
                               >
                                 Submit Check-in Snapshot
@@ -170,13 +201,11 @@ export default function ScribeDashboard() {
                             </button>
                             <button
                               className="btn btn-primary"
-                              onClick={() => advanceOrderStatus(order.id, 'Dispatched', 'Writing completed. Handed to Borzo courier partner with sealed tamper-evident envelope.')}
+                              disabled={busyId === order.id}
+                              onClick={() => act(order.id, () => dispatchOrder(order.id))}
                             >
                               📦 Mark Finished &amp; Dispatch
                             </button>
-                            <Link to={`/track/${order.id}`} className="btn btn-ghost">
-                              Live Tracker
-                            </Link>
                           </div>
                         )}
                       </div>
@@ -201,17 +230,11 @@ export default function ScribeDashboard() {
                           />
                           <button
                             className="btn btn-primary"
-                            disabled={(otpEntry[order.id] ?? '').length !== 6}
-                            onClick={() => {
-                              if ((otpEntry[order.id] ?? '') !== order.otp) { setOtpError('That code does not match. Ask the customer to read it again.'); return }
-                              advanceOrderStatus(order.id, 'Delivered', 'Gate delivery confirmed by delivery code match.')
-                            }}
+                            disabled={(otpEntry[order.id] ?? '').length !== 6 || busyId === order.id}
+                            onClick={() => act(order.id, () => confirmDelivery(order.id, otpEntry[order.id] ?? ''), setOtpError)}
                           >
                             Confirm Gate Delivery
                           </button>
-                          <Link to={`/track/${order.id}`} className="btn btn-ghost">
-                            Audit Trail
-                          </Link>
                         </div>
                         {otpError && <p className="alert alert--warn" role="alert" style={{ marginTop: 8 }}>{otpError}</p>}
                       </div>
@@ -227,7 +250,7 @@ export default function ScribeDashboard() {
         <div className="dash-column">
           <div className="column-header">
             <h2>Nearby Campus Orders ({pendingOrders.length})</h2>
-            <span className="muted-tag">Within 3 km of {profile.college.split(' ')[0]}</span>
+            <span className="muted-tag">Open to approved scribes</span>
           </div>
 
           <div className="nearby-orders-list">
@@ -240,8 +263,7 @@ export default function ScribeDashboard() {
                 <div key={order.id} className="card nearby-order-card">
                   <div className="nearby-card-header">
                     <div>
-                      <span className="distance-chip">📍 {order.distanceKm} km away</span>
-                      <h3 style={{ marginTop: 8, fontSize: 17 }}>{order.title}</h3>
+                      <h3 style={{ fontSize: 17 }}>{order.title}</h3>
                       <p style={{ fontSize: 13, color: 'var(--muted)' }}>
                         {order.subject} · {order.customerName}
                       </p>
@@ -262,7 +284,8 @@ export default function ScribeDashboard() {
                   <div className="nearby-card-footer">
                     <button
                       className="btn btn-primary full"
-                      onClick={() => acceptOrder(order.id)}
+                      disabled={busyId === order.id}
+                      onClick={() => act(order.id, () => acceptOrder(order.id))}
                     >
                       Accept Order ({inr(order.scribePayout)})
                     </button>
@@ -279,9 +302,9 @@ export default function ScribeDashboard() {
               Your handwriting card is published to customers. Keep UPI VPA updated for instant escrow releases.
             </p>
             <div className="sample-card-preview" style={{ marginTop: 12 }}>
-              <p className="sample-scribble font-caveat">"{profile.sampleText}"</p>
+              <p className="sample-scribble font-caveat">"{profile.sampleText || 'Add a handwriting sample in your profile.'}"</p>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginTop: 8 }}>
-                <span>UPI: <strong>{profile.upiVpa}</strong></span>
+                <span>UPI: <strong>{profile.upiVpa || 'not set'}</strong></span>
                 <Link to="/scribe/onboarding" style={{ color: 'var(--brand)', fontWeight: 600 }}>
                   Edit Profile ➔
                 </Link>

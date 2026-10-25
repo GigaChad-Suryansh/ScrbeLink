@@ -12,11 +12,15 @@
  * Data is still held in memory (see DEPLOYMENT.md): orders reset when the process restarts.
  */
 
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import express, { type NextFunction, type Request, type Response } from 'express'
 import cors from 'cors'
 import helmet from 'helmet'
 import rateLimit from 'express-rate-limit'
 import { calculateQuote, checkCoverPage, countWords, sanitizeText } from '../shared/rules'
+import { validateUpload } from '../shared/upload'
 import {
   ALLOWED_TRANSITIONS,
   validateTransition,
@@ -34,6 +38,7 @@ import {
   assertProductionConfig,
   isProduction,
   randomDigits,
+  randomToken,
   requireAdminOrCron,
   requireAuth,
   safeEqual,
@@ -77,13 +82,18 @@ interface OrderDoc {
   pages: number
   words: number
   deliveryOtp: string
+  addons: string[]
+  penStyle: string
+  /** If set, only this scribe sees the order in their pool. */
+  preferredScribeId?: string
+  createdAt: string
   intakeDeadline?: string
   nextCheckInDue?: string
   finalDeadline: string
   timeline: Array<{ status: string; timestamp: string; note: string }>
 }
 
-const dbOrders: OrderDoc[] = [
+const seedOrders = (): OrderDoc[] => [
   {
     id: 'SL-7412',
     title: 'Macroeconomics Unit 3: Monetary Policy',
@@ -96,6 +106,9 @@ const dbOrders: OrderDoc[] = [
     pages: 8,
     words: 1540,
     deliveryOtp: '741298',
+    addons: ['2 Simple Diagrams'],
+    penStyle: 'Gel · Black',
+    createdAt: new Date().toISOString(),
     intakeDeadline: 'Passed',
     nextCheckInDue: new Date(Date.now() + 45 * 60 * 1000).toISOString(),
     finalDeadline: computeDeadlines(8).formattedFinalDeadline,
@@ -106,6 +119,31 @@ const dbOrders: OrderDoc[] = [
     ],
   },
 ]
+
+const dbOrders: OrderDoc[] = process.env.NODE_ENV === 'test' || process.env.SEED_DEMO === 'true' ? seedOrders() : []
+
+// Scribe wallet ledger: money already moved out to the scribe's UPI.
+const withdrawals = new Map<string, Array<{ id: string; amount: number; at: string; upiVpa: string }>>()
+const UPLOAD_DIR = process.env.UPLOAD_DIR ?? path.join(os.tmpdir(), 'scribelink-uploads')
+const MEDIA_PATH = /^\/api\/media\/[a-f0-9]{32}$/
+const SAMPLE_PATH = /^\/api\/samples\/[a-f0-9]{32}$/
+const IMAGE_TYPES = ['png', 'jpeg', 'webp'] as const
+
+/** Stored files are named <id>.<detected type>, so the type never comes from the client. */
+function findUpload(id: string, types: readonly string[]): { file: string; type: string } | undefined {
+  for (const type of types) {
+    const file = path.join(UPLOAD_DIR, `${id}.${type}`)
+    if (fs.existsSync(file)) return { file, type }
+  }
+  return undefined
+}
+
+function storeUpload(bytes: Buffer, type: string): string {
+  fs.mkdirSync(UPLOAD_DIR, { recursive: true })
+  const id = randomToken(16).toLowerCase()
+  fs.writeFileSync(path.join(UPLOAD_DIR, `${id}.${type}`), bytes, { mode: 0o600 })
+  return id
+}
 
 const activeOtps = new Map<string, { otp: string; expiresAt: number }>()
 const otpAttempts = new AttemptLimiter(5, FIFTEEN_MIN)
@@ -168,7 +206,51 @@ function applyTransition(order: OrderDoc, next: OrderStateEnum, note: string): v
   order.timeline.push({ status: next, timestamp: new Date().toISOString(), note })
 }
 
+/** A scribe may take work only once an admin has approved their handwriting card. */
+function scribeCanWork(phoneNumber: string): boolean {
+  const rec = globalLogistics.getScribe(scribeIdFor(phoneNumber))
+  return !!rec && rec.isApproved && !rec.isSuspended
+}
+
+function addonLabels(b: { simpleDrawings: number; complexDrawings: number; graphs: number; customTemplate: boolean }, pages: number): string[] {
+  const plural = (n: number, w: string) => `${n} ${w}${n > 1 ? 's' : ''}`
+  return [
+    b.simpleDrawings > 0 && plural(b.simpleDrawings, 'Simple Diagram'),
+    b.complexDrawings > 0 && plural(b.complexDrawings, 'Complex Diagram'),
+    b.graphs > 0 && plural(b.graphs, 'Graph'),
+    b.customTemplate && 'College Template',
+    pages >= 20 && 'Rigid Packaging',
+  ].filter((a): a is string => Boolean(a))
+}
+
+/** Evidence is either a public https link or a file this server stored itself. */
+function evidenceUrl(v: unknown, name: string): string {
+  if (typeof v === 'string' && MEDIA_PATH.test(v)) {
+    if (!findUpload(v.slice('/api/media/'.length), ['mp4'])) throw new ValidationError(`${name} refers to a missing upload`)
+    return v
+  }
+  return mediaUrl(v, name)
+}
+
 const forbid = (res: Response, msg = 'You are not allowed to do this') => res.status(403).json({ error: msg })
+
+/** Releases due escrow and reassigns ghosted orders. Called by cron, by admins, and on a timer. */
+function runScheduledJobs(now: Date) {
+  const escrowReleased = globalScheduler.runEscrowReleaseJob(now)
+  const rushResults = globalScheduler.runRushMonitorJob(now)
+
+  // A strike without taking the order away would leave a ghosting scribe assigned.
+  for (const id of rushResults.reassignedOrderIds) {
+    const order = dbOrders.find((o) => o.id === id)
+    if (order && validateTransition(order.status, 'Reassigned').success) {
+      order.scribeId = undefined
+      order.scribeName = undefined
+      order.nextCheckInDue = undefined
+      applyTransition(order, 'Reassigned', 'Missed hourly check-in. Returned to the pool; restart from page 1.')
+    }
+  }
+  return { escrowReleased, rushResults }
+}
 
 // ── App factory (tests build a fresh app so rate limits start clean) ─────────
 
@@ -193,7 +275,7 @@ export function createApp() {
   const general = limit(300)
   const otpSendLimit = limit(5)
   const otpVerifyLimit = limit(20)
-  const sensitiveLimit = limit(30)
+  const sensitiveLimit = limit(60)
   app.use('/api', general)
 
   // ── 1. Auth ────────────────────────────────────────────────────────────────
@@ -237,6 +319,24 @@ export function createApp() {
       token: signSession({ phone: ph, role }),
       user: { phone: ph, role, ...(role === 'scribe' ? { scribeId: scribeIdFor(ph) } : {}) },
     })
+  })
+
+  // Approved scribes a customer can choose from. Contact details never leave the server.
+  app.get('/api/scribes', (_req, res) => {
+    const scribes = globalLogistics
+      .getAllScribes()
+      .filter((x) => x.isApproved && !x.isSuspended)
+      .map((x) => ({
+        id: x.scribeId,
+        name: x.name,
+        college: x.college,
+        specialties: x.specialties ?? [],
+        sample: x.sampleCardText,
+        sampleImageUrl: x.handwritingSampleUrl || undefined,
+        completedOrders: dbOrders.filter((o) => o.scribeId === x.scribeId && (o.status === 'Delivered' || o.status === 'Closed')).length,
+        available: !dbOrders.some((o) => o.scribeId === x.scribeId && o.status === 'Writing') ,
+      }))
+    res.json({ success: true, scribes })
   })
 
   // ── 2. Pricing and text checks (public) ────────────────────────────────────
@@ -292,7 +392,12 @@ export function createApp() {
     const payment = getPayment(paymentId)
     const order = payment && dbOrders.find((o) => o.id === payment.orderId)
     if (!payment || !order || !canView(order, sessionOf(res))) return res.status(404).json({ error: 'Payment not found' })
-    return res.json(verifyUpiPayment(paymentId, forceSuccess))
+    if (payment.amount !== order.customerTotal && forceSuccess) {
+      return res.status(400).json({ error: 'Amount does not match the order total' })
+    }
+    const result = verifyUpiPayment(paymentId, forceSuccess)
+    if (result.success && order.status === 'Draft') applyTransition(order, 'Paid', 'Escrow payment locked in test gateway.')
+    return res.json({ ...result, orderStatus: order.status })
   })
 
   app.get('/api/payment/:id', requireAuth('customer', 'admin'), (req, res) => {
@@ -304,6 +409,20 @@ export function createApp() {
 
   // ── 4. Orders and the state machine ────────────────────────────────────────
 
+  app.get('/api/orders', requireAuth(), (_req, res) => {
+    const s = sessionOf(res)
+    const me = scribeIdFor(s.phone)
+    const visible = dbOrders.filter((o) => {
+      if (s.role === 'admin') return true
+      if (s.role === 'customer') return ownsOrder(o, s)
+      if (o.scribeId === me) return true
+      const open = o.status === 'Paid' || o.status === 'Reassigned'
+      return open && scribeCanWork(s.phone) && (!o.preferredScribeId || o.preferredScribeId === me)
+    })
+    const newestFirst = [...visible].reverse()
+    res.json({ success: true, orders: newestFirst.map((o) => publicOrder(o, s)) })
+  })
+
   app.get('/api/orders/:id', requireAuth(), (req, res) => {
     const order = loadOrder(req, res)
     if (order) res.json({ success: true, order: publicOrder(order, sessionOf(res)) })
@@ -313,27 +432,37 @@ export function createApp() {
     const s = sessionOf(res)
     const b = bodyOf(req)
     const words = int(b.words, 'words', 1, 200_000)
-    const q = calculateQuote({
-      words,
+    const extras = {
       simpleDrawings: optInt(b.simpleDrawings, 'simpleDrawings', 0, 100),
       complexDrawings: optInt(b.complexDrawings, 'complexDrawings', 0, 100),
       graphs: optInt(b.graphs, 'graphs', 0, 100),
       customTemplate: b.customTemplate === undefined ? false : bool(b.customTemplate, 'customTemplate'),
-    })
+    }
+    const q = calculateQuote({ words, ...extras })
+    const preferred = optStr(b.preferredScribeId, 'preferredScribeId', 40)
+    if (preferred) {
+      idLike(preferred, 'preferredScribeId')
+      const rec = globalLogistics.getScribe(preferred)
+      if (!rec || !rec.isApproved || rec.isSuspended) throw new ValidationError('That scribe is not available')
+    }
 
     const order: OrderDoc = {
       id: newOrderId(),
       customerPhone: s.phone,
       title: optStr(b.title, 'title', 120) ?? 'Manuscript Order',
       subject: optStr(b.subject, 'subject', 60) ?? 'General',
-      status: 'Paid',
+      status: 'Draft',
       customerTotal: q.customerTotal,
       scribePayout: q.scribeTotal,
       pages: q.pages,
       words,
       deliveryOtp: randomDigits(6),
+      addons: addonLabels(extras, q.pages),
+      penStyle: optStr(b.penStyle, 'penStyle', 40) ?? 'Ballpoint · Blue',
+      preferredScribeId: preferred,
+      createdAt: new Date().toISOString(),
       finalDeadline: computeDeadlines(q.pages).formattedFinalDeadline,
-      timeline: [{ status: 'Paid', timestamp: new Date().toISOString(), note: 'Escrow payment locked in test gateway.' }],
+      timeline: [{ status: 'Draft', timestamp: new Date().toISOString(), note: 'Order created. Waiting for payment.' }],
     }
     dbOrders.push(order)
     return res.status(201).json({ success: true, order: publicOrder(order, s) })
@@ -354,6 +483,10 @@ export function createApp() {
       if (next === 'Accepted' ? order.scribeId && order.scribeId !== me : order.scribeId !== me) {
         return forbid(res, 'Only the assigned scribe can do this')
       }
+      if (next === 'Accepted') {
+        if (!scribeCanWork(s.phone)) return forbid(res, 'Your handwriting card has not been approved yet')
+        if (order.preferredScribeId && order.preferredScribeId !== me) return forbid(res, 'This order was requested for another scribe')
+      }
     } else if (s.role === 'customer') {
       if (!CUSTOMER_TARGETS.has(next)) return forbid(res)
     }
@@ -370,7 +503,7 @@ export function createApp() {
     }
 
     order.scribeId = scribeId
-    order.scribeName = scribeId
+    order.scribeName = scribeId ? globalLogistics.getScribe(scribeId)?.name ?? scribeId : undefined
     applyTransition(order, next, note ?? check.auditLog)
     return res.json({ success: true, order: publicOrder(order, s), audit: check.auditLog })
   })
@@ -406,6 +539,148 @@ export function createApp() {
     return res.json({ success: true, strikes: globalScheduler.getScribeStrikeInfo(id) })
   })
 
+  // ── 5b. Scribe profile, wallet and payouts ─────────────────────────────────
+
+  function walletOf(scribeId: string) {
+    const released = globalScheduler.getEscrowRecordsFor(scribeId).filter((r) => r.isReleased)
+    const paidOut = withdrawals.get(scribeId) ?? []
+    const payouts: Array<{ id: string; orderId: string; amount: number; status: 'In Escrow' | 'Released' | 'Transferred'; date: string }> = []
+    for (const o of dbOrders.filter((x) => x.scribeId === scribeId)) {
+      const rec = globalScheduler.getEscrowRecord(o.id)
+      if (rec?.isReleased) payouts.push({ id: `P-${o.id}`, orderId: o.id, amount: o.scribePayout, status: 'Released', date: rec.releaseDueAt.toISOString() })
+      else if (rec?.disputeOutcome === 'REFUNDED_TO_CUSTOMER' || o.status === 'Cancelled') continue
+      else if (['Accepted', 'Writing', 'Dispatched', 'Delivered', 'Disputed'].includes(o.status)) {
+        payouts.push({ id: `P-${o.id}`, orderId: o.id, amount: o.scribePayout, status: 'In Escrow', date: o.timeline.at(-1)?.timestamp ?? o.createdAt })
+      }
+    }
+    for (const w of paidOut) payouts.push({ id: w.id, orderId: '—', amount: w.amount, status: 'Transferred', date: w.at })
+    const releasedTotal = released.reduce((n, r) => n + r.amount, 0)
+    const withdrawn = paidOut.reduce((n, w) => n + w.amount, 0)
+    return {
+      payouts,
+      walletBalance: releasedTotal - withdrawn,
+      pendingEscrow: payouts.filter((p) => p.status === 'In Escrow').reduce((n, p) => n + p.amount, 0),
+      lifetimeEarnings: releasedTotal,
+    }
+  }
+
+  function scribeView(phoneNumber: string) {
+    const id = scribeIdFor(phoneNumber)
+    const rec = globalLogistics.getScribe(id)
+    const completed = dbOrders.filter((o) => o.scribeId === id && (o.status === 'Delivered' || o.status === 'Closed')).length
+    return {
+      profile: {
+        id,
+        phone: phoneNumber,
+        registered: !!rec,
+        name: rec?.name ?? '',
+        college: rec?.college ?? '',
+        upiVpa: rec?.upiVpa ?? '',
+        specialties: rec?.specialties ?? [],
+        sampleText: rec?.sampleCardText ?? '',
+        sampleImageUrl: rec?.handwritingSampleUrl || undefined,
+        isApproved: !!rec?.isApproved,
+        isSuspended: !!rec?.isSuspended,
+        totalOrders: completed,
+      },
+      ...walletOf(id),
+    }
+  }
+
+  app.get('/api/scribe/me', requireAuth('scribe'), (_req, res) => {
+    res.json({ success: true, ...scribeView(sessionOf(res).phone) })
+  })
+
+  app.put('/api/scribe/me', requireAuth('scribe'), (req, res) => {
+    const s = sessionOf(res)
+    const b = bodyOf(req)
+    const specialties = Array.isArray(b.specialties) ? b.specialties : []
+    const sampleImage = optStr(b.sampleImageUrl, 'sampleImageUrl', 80)
+    if (sampleImage && !(SAMPLE_PATH.test(sampleImage) && findUpload(sampleImage.slice('/api/samples/'.length), IMAGE_TYPES))) {
+      throw new ValidationError('sampleImageUrl must be an uploaded sample')
+    }
+    if (specialties.length > 12) throw new ValidationError('specialties has too many entries')
+    globalLogistics.upsertScribe({
+      scribeId: scribeIdFor(s.phone),
+      phone: s.phone,
+      name: str(b.name, 'name', { max: 60 }),
+      college: str(b.college, 'college', { max: 100 }),
+      sampleCardText: str(b.sampleText, 'sampleText', { min: 10, max: 600 }),
+      upiVpa: upiId(b.upiVpa, 'upiVpa'),
+      specialties: specialties.map((x) => str(x, 'specialty', { max: 40 })),
+      sampleImageUrl: sampleImage,
+    })
+    res.json({ success: true, ...scribeView(s.phone) })
+  })
+
+  app.post('/api/scribe/withdraw', sensitiveLimit, requireAuth('scribe'), (_req, res) => {
+    const s = sessionOf(res)
+    const id = scribeIdFor(s.phone)
+    const rec = globalLogistics.getScribe(id)
+    if (!rec || !rec.upiVpa) return res.status(400).json({ error: 'Add your UPI ID in your profile first' })
+    if (rec.isSuspended) return forbid(res, 'Your account is suspended')
+    const { walletBalance } = walletOf(id)
+    if (walletBalance <= 0) return res.status(400).json({ error: 'Nothing to withdraw yet' })
+    // No payout provider is connected: this records the transfer so balances stay correct.
+    const list = withdrawals.get(id) ?? []
+    list.push({ id: `TX-${randomDigits(6)}`, amount: walletBalance, at: new Date().toISOString(), upiVpa: rec.upiVpa })
+    withdrawals.set(id, list)
+    res.json({ success: true, withdrawn: walletBalance, ...scribeView(s.phone) })
+  })
+
+  // ── 5c. Evidence uploads (unboxing video) ──────────────────────────────────
+
+  const uploadName = (req: Request) => {
+    const raw = req.headers['x-file-name']
+    return typeof raw === 'string' ? decodeURIComponent(raw).slice(0, 120) : 'file'
+  }
+
+  app.post(
+    '/api/uploads/video',
+    sensitiveLimit,
+    requireAuth('customer', 'admin'),
+    express.raw({ type: 'application/octet-stream', limit: '100mb' }),
+    (req, res) => {
+      const bytes = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0)
+      const verdict = validateUpload({ name: uploadName(req), size: bytes.length }, bytes, 'video')
+      if (!verdict.ok) return res.status(400).json({ error: verdict.error })
+      return res.status(201).json({ success: true, url: `/api/media/${storeUpload(bytes, 'mp4')}` })
+    },
+  )
+
+  // Handwriting sample photos are shown to customers, so they are served without sign-in.
+  app.post(
+    '/api/uploads/sample',
+    sensitiveLimit,
+    requireAuth('scribe'),
+    express.raw({ type: 'application/octet-stream', limit: '9mb' }),
+    (req, res) => {
+      const bytes = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0)
+      const verdict = validateUpload({ name: uploadName(req), size: bytes.length }, bytes, 'image')
+      if (!verdict.ok) return res.status(400).json({ error: verdict.error })
+      return res.status(201).json({ success: true, url: `/api/samples/${storeUpload(bytes, verdict.type)}` })
+    },
+  )
+
+  app.get('/api/samples/:id', (req, res) => {
+    const id = String(req.params.id)
+    const found = /^[a-f0-9]{32}$/.test(id) ? findUpload(id, IMAGE_TYPES) : undefined
+    if (!found) return res.status(404).json({ error: 'Not found' })
+    res.setHeader('Content-Type', `image/${found.type}`)
+    res.setHeader('Cache-Control', 'public, max-age=3600')
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin')
+    return fs.createReadStream(found.file).pipe(res)
+  })
+
+  app.get('/api/media/:id', requireAuth(), (req, res) => {
+    const id = String(req.params.id)
+    const found = /^[a-f0-9]{32}$/.test(id) ? findUpload(id, ['mp4']) : undefined
+    if (!found) return res.status(404).json({ error: 'Not found' })
+    res.setHeader('Content-Type', 'video/mp4')
+    res.setHeader('Cache-Control', 'private, max-age=300')
+    return fs.createReadStream(found.file).pipe(res)
+  })
+
   // ── 6. Scheduled jobs (platform cron or admin) ─────────────────────────────
 
   app.post('/api/cron/trigger-jobs', requireAdminOrCron, (req, res) => {
@@ -415,19 +690,7 @@ export function createApp() {
     const now = given === undefined ? new Date() : new Date(str(given, 'simulatedTimestamp', { max: 40 }))
     if (Number.isNaN(now.getTime())) throw new ValidationError('simulatedTimestamp is not a valid date')
 
-    const escrowReleased = globalScheduler.runEscrowReleaseJob(now)
-    const rushResults = globalScheduler.runRushMonitorJob(now)
-
-    // A strike without taking the order away would leave a ghosting scribe assigned.
-    for (const id of rushResults.reassignedOrderIds) {
-      const order = dbOrders.find((o) => o.id === id)
-      if (order && validateTransition(order.status, 'Reassigned').success) {
-        order.scribeId = undefined
-        order.scribeName = undefined
-        order.nextCheckInDue = undefined
-        applyTransition(order, 'Reassigned', 'Missed hourly check-in. Returned to the pool; restart from page 1.')
-      }
-    }
+    const { escrowReleased, rushResults } = runScheduledJobs(now)
 
     return res.json({
       success: true,
@@ -458,11 +721,12 @@ export function createApp() {
       order.customerPhone,
     )
     // The OTP goes to the customer only. Whoever dispatches must never see it.
+    if (order.status === 'Writing') applyTransition(order, 'Dispatched', `Handed to ${task.courierPartner}. Tracking ${task.trackingId}.`)
     const { deliveryOtp: _otp, ...safeTask } = task
-    return res.json({ success: true, task: safeTask })
+    return res.json({ success: true, task: safeTask, order: publicOrder(order, s) })
   })
 
-  app.post('/api/logistics/confirm-delivery', sensitiveLimit, requireAuth('customer', 'admin'), (req, res) => {
+  app.post('/api/logistics/confirm-delivery', sensitiveLimit, requireAuth('customer', 'admin', 'scribe'), (req, res) => {
     const s = sessionOf(res)
     const b = bodyOf(req)
     const orderId = idLike(b.orderId, 'orderId')
@@ -470,6 +734,7 @@ export function createApp() {
     const photo = b.gateDropPhotoUrl === undefined ? undefined : mediaUrl(b.gateDropPhotoUrl, 'gateDropPhotoUrl')
     const order = dbOrders.find((o) => o.id === orderId)
     if (!order || !canView(order, s)) return res.status(404).json({ error: 'Order not found' })
+    if (s.role === 'scribe' && order.scribeId !== scribeIdFor(s.phone)) return forbid(res, 'Only the assigned scribe can confirm delivery')
 
     if (deliveryAttempts.lockedForMs(orderId) > 0) {
       return res.status(429).json({ error: 'Too many wrong codes. Try again in 15 minutes.' })
@@ -486,7 +751,7 @@ export function createApp() {
       applyTransition(order, 'Delivered', 'Delivery OTP confirmed at the gate.')
     }
     const { deliveryOtp: _otp, ...safeTask } = result.task!
-    return res.json({ success: true, task: safeTask })
+    return res.json({ success: true, task: safeTask, order: publicOrder(order, s) })
   })
 
   // ── 8. Disputes and admin ──────────────────────────────────────────────────
@@ -498,7 +763,7 @@ export function createApp() {
     const reason = oneOf('reason' in b ? b.reason : 'MISSING_PAGES', 'reason', [
       'ILLEGIBLE_HANDWRITING', 'MISSING_PAGES', 'DAMAGED_ENVELOPE', 'INCORRECT_DIAGRAMS', 'OTHER',
     ] as const)
-    const video = mediaUrl(b.unboxingVideoUrl, 'unboxingVideoUrl')
+    const video = evidenceUrl(b.unboxingVideoUrl, 'unboxingVideoUrl')
     const notes = optStr(b.customerNotes, 'customerNotes', 1000) ?? ''
     const name = optStr(b.customerName, 'customerName', 80)
 
@@ -565,7 +830,7 @@ export function createApp() {
   })
 
   app.get('/api/health', (_req, res) => {
-    res.json({ service: 'ScribeLink Core API', status: 'ok', phase: 7, timestamp: new Date().toISOString() })
+    res.json({ service: 'ScribeLink Core API', status: 'ok', phase: 7, production: isProduction(), timestamp: new Date().toISOString() })
   })
 
   // ── Fallbacks ──────────────────────────────────────────────────────────────
@@ -599,4 +864,6 @@ if (process.env.NODE_ENV !== 'test') {
   app.listen(PORT, () => {
     console.log(`[ScribeLink] API listening on port ${PORT}`)
   })
+  // Escrow and the rush monitor must not depend on someone calling the cron endpoint.
+  setInterval(() => runScheduledJobs(new Date()), 60_000).unref()
 }

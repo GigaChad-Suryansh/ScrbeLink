@@ -4,22 +4,13 @@
  * and ScribePortalContext (Phase 3).
  */
 
-import { useEffect, useReducer } from 'react'
+import { useEffect, useReducer, type ReactNode } from 'react'
 import { Routes, Route, Navigate, Link } from 'react-router-dom'
 
 import { OrderContext, orderReducer, INITIAL_ORDER, type OrderState } from './lib/orderStore'
-import { usePersistentState } from './lib/usePersistentState'
-import { randomDigits } from './shared/random'
-import {
-  ScribePortalContext,
-  INITIAL_SCRIBE_PROFILE,
-  INITIAL_ORDERS,
-  INITIAL_PAYOUTS,
-  type ScribeProfile,
-  type TrackableOrder,
-  type PayoutTransaction,
-  type OrderStatus,
-} from './lib/scribeStore'
+import { RequireAuth } from './components/SignIn'
+import { PortalProvider } from './lib/portal'
+import type { Role } from './lib/api'
 
 // Landing page components (Phase 1)
 import Calculator from './components/Calculator'
@@ -126,6 +117,23 @@ function LandingPage() {
 
 // ── App ───────────────────────────────────────────────────────────────────
 
+/** A signed-in area: asks for sign-in, then loads that role's data and shows the shared layout. */
+function Area({ roles }: { roles: Role[] }) {
+  return (
+    <RequireAuth roles={roles}>
+      {(role) => (
+        <PortalProvider role={role} key={role}>
+          <ScribeLayout role={role} />
+        </PortalProvider>
+      )}
+    </RequireAuth>
+  )
+}
+
+function Protected({ roles, children }: { roles: Role[]; children: ReactNode }) {
+  return <RequireAuth roles={roles}>{() => children}</RequireAuth>
+}
+
 export default function App() {
   const [orderState, orderDispatch] = useReducer(orderReducer, INITIAL_ORDER, (init): OrderState => {
     try {
@@ -140,165 +148,42 @@ export default function App() {
     try { sessionStorage.setItem('scribelink.v1.wizard', JSON.stringify(orderState)) } catch { /* ignore */ }
   }, [orderState])
 
-  // Phase 3 Scribe portal state
-  const [profile, setProfile] = usePersistentState<ScribeProfile>('profile', INITIAL_SCRIBE_PROFILE)
-  const [orders, setOrders] = usePersistentState<TrackableOrder[]>('orders', INITIAL_ORDERS)
-  const [payouts, setPayouts] = usePersistentState<PayoutTransaction[]>('payouts', INITIAL_PAYOUTS)
-
-  function updateProfile(updated: Partial<ScribeProfile>) {
-    setProfile(prev => ({ ...prev, ...updated }))
-  }
-
-  function acceptOrder(orderId: string) {
-    setOrders(prev =>
-      prev.map(o => {
-        if (o.id !== orderId) return o
-        const nextStatus: OrderStatus = 'Accepted'
-        return {
-          ...o,
-          status: nextStatus,
-          scribeId: profile.id,
-          scribeName: profile.name,
-          intakeInspectionExpiresAt: '28 mins left',
-          timeline: [
-            ...o.timeline,
-            {
-              status: nextStatus,
-              timestamp: 'Just now',
-              note: `Accepted by ${profile.name}. 30-minute intake window active.`,
-            },
-          ],
-        }
-      })
-    )
-  }
-
-  function advanceOrderStatus(orderId: string, nextStatus: OrderStatus, note: string) {
-    setOrders(prev =>
-      prev.map(o => {
-        if (o.id !== orderId) return o
-        let nextCheckIn = o.nextCheckInDueAt
-        let otp = o.otp
-
-        if (nextStatus === 'Writing') {
-          nextCheckIn = '58 mins remaining'
-        } else if (nextStatus === 'Dispatched') {
-          otp = otp || randomDigits(6)
-        }
-
-        return {
-          ...o,
-          status: nextStatus,
-          nextCheckInDueAt: nextCheckIn,
-          otp,
-          timeline: [
-            ...o.timeline,
-            {
-              status: nextStatus,
-              timestamp: 'Just now',
-              note,
-            },
-          ],
-        }
-      })
-    )
-
-    // Scribe wallet updates if delivered
-    if (nextStatus === 'Delivered') {
-      const target = orders.find(o => o.id === orderId)
-      if (target) {
-        setProfile(p => ({
-          ...p,
-          walletBalance: p.walletBalance + target.scribePayout,
-          pendingEscrow: Math.max(0, p.pendingEscrow - target.scribePayout),
-          totalOrders: p.totalOrders + 1,
-        }))
-        setPayouts(p => [
-          {
-            id: `TX-${randomDigits(4)}`,
-            orderId,
-            amount: target.scribePayout,
-            status: 'Released',
-            date: 'Just now',
-            upiVpa: profile.upiVpa,
-          },
-          ...p,
-        ])
-      }
-    }
-  }
-
-  function addOrder(order: TrackableOrder) {
-    setOrders(prev => [order, ...prev.filter(o => o.id !== order.id)])
-  }
-
-  function submitCheckIn(orderId: string) {
-    setOrders(prev =>
-      prev.map(o => {
-        if (o.id !== orderId) return o
-        return {
-          ...o,
-          nextCheckInDueAt: '59 mins remaining',
-        }
-      })
-    )
-  }
-
   return (
     <OrderContext.Provider value={{ state: orderState, dispatch: orderDispatch }}>
-      <ScribePortalContext.Provider
-        value={{
-          profile,
-          orders,
-          payouts,
-          updateProfile,
-          acceptOrder,
-          advanceOrderStatus,
-          submitCheckIn,
-          addOrder,
-        }}
-      >
-        <Routes>
-          {/* Landing */}
-          <Route path="/" element={<LandingPage />} />
+      <Routes>
+        <Route path="/" element={<LandingPage />} />
 
-          {/* Phase 2: Order wizard */}
-          <Route path="/order" element={<WizardLayout />}>
-            <Route index element={<Navigate to="upload" replace />} />
-            <Route path="upload"       element={<StepUpload />} />
-            <Route path="addons"       element={<StepAddons />} />
-            <Route path="scribe"       element={<StepScribe />} />
-            <Route path="checkout"     element={<StepCheckout />} />
-            <Route path="confirmation" element={<OrderConfirmation />} />
-          </Route>
+        <Route path="/order" element={<WizardLayout />}>
+          <Route index element={<Navigate to="upload" replace />} />
+          <Route path="upload"       element={<StepUpload />} />
+          <Route path="addons"       element={<StepAddons />} />
+          <Route path="scribe"       element={<StepScribe />} />
+          <Route path="checkout"     element={<Protected roles={['customer']}><StepCheckout /></Protected>} />
+          <Route path="confirmation" element={<OrderConfirmation />} />
+        </Route>
 
-          {/* Phase 3: Customer Order Tracker */}
-          <Route path="/track" element={<ScribeLayout />}>
-            <Route index element={<OrderTracker />} />
-            <Route path=":orderId" element={<OrderTracker />} />
-          </Route>
+        <Route path="/track" element={<Area roles={['customer']} />}>
+          <Route index element={<OrderTracker />} />
+          <Route path=":orderId" element={<OrderTracker />} />
+        </Route>
 
-          {/* Phase 3: Scribe App & Dashboard */}
-          <Route path="/scribe" element={<ScribeLayout />}>
-            <Route index element={<Navigate to="dashboard" replace />} />
-            <Route path="dashboard" element={<ScribeDashboard />} />
-            <Route path="onboarding" element={<ScribeOnboarding />} />
-            <Route path="earnings" element={<ScribeEarnings />} />
-          </Route>
+        <Route path="/scribe" element={<Area roles={['scribe']} />}>
+          <Route index element={<Navigate to="dashboard" replace />} />
+          <Route path="dashboard" element={<ScribeDashboard />} />
+          <Route path="onboarding" element={<ScribeOnboarding />} />
+          <Route path="earnings" element={<ScribeEarnings />} />
+        </Route>
 
-          {/* Phase 6: Admin Panel & Disputes */}
-          <Route path="/admin" element={<ScribeLayout />}>
-            <Route index element={<AdminPanel />} />
-          </Route>
-          <Route path="/dispute" element={<ScribeLayout />}>
-            <Route index element={<DisputeFiling />} />
-            <Route path=":orderId" element={<DisputeFiling />} />
-          </Route>
+        <Route path="/admin" element={<Area roles={['admin']} />}>
+          <Route index element={<AdminPanel />} />
+        </Route>
+        <Route path="/dispute" element={<Area roles={['customer']} />}>
+          <Route index element={<DisputeFiling />} />
+          <Route path=":orderId" element={<DisputeFiling />} />
+        </Route>
 
-          {/* Fallback */}
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </ScribePortalContext.Provider>
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
     </OrderContext.Provider>
   )
 }

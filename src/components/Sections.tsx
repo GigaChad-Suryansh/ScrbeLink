@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom'
 import Icon, { type IconName } from './Icons'
 import Reveal from './Reveal'
-import { resetDemoData } from '../lib/usePersistentState'
+import { signOutAll } from '../lib/api'
 
 export function HowItWorks() {
   return (
@@ -125,7 +125,7 @@ export function Footer() {
         </div>
         <div className="footer-note">
           <span>Prototype · demo data only · no real payments</span>
-          <button type="button" className="link" style={{ margin: 0, minHeight: 0, padding: 0 }} onClick={() => { resetDemoData(); window.location.assign('/') }}>Reset demo data</button>
+          <button type="button" className="link" style={{ margin: 0, minHeight: 0, padding: 0 }} onClick={() => { signOutAll(); try { sessionStorage.removeItem('scribelink.v1.wizard') } catch { /* ignore */ } window.location.assign('/') }}>Sign out everywhere</button>
         </div>
       </div>
     </footer>

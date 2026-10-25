@@ -8,27 +8,19 @@
 
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useOrder, MOCK_SCRIBES } from '../lib/orderStore'
+import { useOrder } from '../lib/orderStore'
 import { quote, inr, formatDuration } from '../lib/pricing'
-import { createUpiPaymentIntent, verifyUpiPayment, type UpiPaymentIntent } from '../backend/paymentGateway'
-import { useScribePortal, type TrackableOrder } from '../lib/scribeStore'
-import { randomDigits, randomToken } from '../shared/random'
-
-function genOrderId(): string {
-  return 'SL-' + randomToken(3)
-}
+import type { UpiPaymentIntent } from '../backend/paymentGateway'
+import { api } from '../lib/api'
 
 export default function StepCheckout() {
   const { state, dispatch } = useOrder()
   const nav = useNavigate()
-  const { addOrder } = useScribePortal()
 
   const [upi, setUpi] = useState(state.upiId || 'student@okaxis')
   const [paymentIntent, setPaymentIntent] = useState<UpiPaymentIntent | null>(null)
   const [paying, setPaying] = useState(false)
   const [upiError, setUpiError] = useState('')
-
-  const scribe = MOCK_SCRIBES.find(s => s.id === state.scribeId)
 
   const q = quote({
     words: state.words,
@@ -44,36 +36,6 @@ export default function StepCheckout() {
     fountain: 'Fountain',
   }
 
-  /** The paid order, in the shape the tracker and the scribe dashboard read. */
-  function buildTrackableOrder(orderId: string): TrackableOrder {
-    const addons = [
-      state.simpleDrawings > 0 && `${state.simpleDrawings} Simple Diagram${state.simpleDrawings > 1 ? 's' : ''}`,
-      state.complexDrawings > 0 && `${state.complexDrawings} Complex Diagram${state.complexDrawings > 1 ? 's' : ''}`,
-      state.graphs > 0 && `${state.graphs} Graph${state.graphs > 1 ? 's' : ''}`,
-      state.customTemplate && 'College Template',
-      q.pages >= 20 && 'Rigid Packaging',
-    ].filter((a): a is string => Boolean(a))
-    const due = new Date(Date.now() + q.turnaroundHours * 3600 * 1000)
-    return {
-      id: orderId,
-      title: (state.doc?.name ?? 'Untitled document').replace(/\.[^.]+$/, ''),
-      subject: scribe?.specialty ?? 'General',
-      customerName: 'Anonymous student',
-      status: 'Paid',
-      pages: q.pages,
-      words: state.words,
-      addons,
-      penStyle: `${penLabels[state.pen]} · ${state.ink === 'blue' ? 'Blue' : 'Black'}`,
-      customerPaid: q.customerTotal,
-      scribePayout: q.scribeTotal,
-      distanceKm: 1,
-      createdAt: 'Just now',
-      deadlineAt: due.toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }),
-      otp: randomDigits(6),
-      timeline: [{ status: 'Paid', timestamp: 'Just now', note: 'Escrow payment confirmed. Waiting for a scribe to accept.' }],
-    }
-  }
-
   function validateUpi(v: string) {
     return /^[\w.\-+]+@[\w]+$/.test(v.trim())
   }
@@ -85,21 +47,44 @@ export default function StepCheckout() {
     }
     setUpiError('')
     setPaying(true)
+    try {
+      // 1. The server creates the order and prices it itself.
+      const created = await api<{ order: { id: string } }>('POST', '/api/orders/create', {
+        as: 'customer',
+        body: {
+          title: (state.doc?.name ?? 'Untitled document').replace(/\.[^.]+$/, ''),
+          subject: 'General',
+          words: state.words,
+          simpleDrawings: state.simpleDrawings,
+          complexDrawings: state.complexDrawings,
+          graphs: state.graphs,
+          customTemplate: state.customTemplate,
+          penStyle: `${penLabels[state.pen]} · ${state.ink === 'blue' ? 'Blue' : 'Black'}`,
+          preferredScribeId: state.scribeId ?? undefined,
+        },
+      })
+      const orderId = created.order.id
 
-    const orderId = genOrderId()
-    // Generate UPI test intent
-    const intent = createUpiPaymentIntent(orderId, q.customerTotal, upi)
-    setPaymentIntent(intent)
+      // 2. Start the UPI payment for exactly that amount.
+      const started = await api<{ payment: UpiPaymentIntent }>('POST', '/api/payment/upi/initiate', {
+        as: 'customer',
+        body: { orderId, amount: q.customerTotal, payerVpa: upi.trim() },
+      })
+      setPaymentIntent(started.payment)
 
-    // Simulate user approving payment in their UPI app
-    setTimeout(() => {
-      verifyUpiPayment(intent.paymentId, true)
+      // 3. Test gateway: the payer "approves" after a moment. Escrow locks and the order becomes Paid.
+      await new Promise((r) => setTimeout(r, 1800))
+      await api('POST', '/api/payment/upi/verify', { as: 'customer', body: { paymentId: started.payment.paymentId } })
+
       dispatch({ type: 'SET_UPI', upiId: upi })
       dispatch({ type: 'PLACE_ORDER', orderId })
-      addOrder(buildTrackableOrder(orderId))
-      setPaying(false)
       nav('/order/confirmation')
-    }, 2200)
+    } catch (e) {
+      setPaymentIntent(null)
+      setUpiError((e as Error).message)
+    } finally {
+      setPaying(false)
+    }
   }
 
   function onBack() {
@@ -158,20 +143,12 @@ export default function StepCheckout() {
           </div>
 
           {/* Scribe */}
-          {scribe && (
-            <div className="summary-section card" style={{ marginTop: 12 }}>
-              <h3 className="summary-heading">Scribe</h3>
-              <div className="summary-row">
-                <span>Name</span><strong>{scribe.name}</strong>
-              </div>
-              <div className="summary-row">
-                <span>ID</span><strong>#{scribe.tag}</strong>
-              </div>
-              <div className="summary-row">
-                <span>Specialty</span><strong>{scribe.specialty}</strong>
-              </div>
+          <div className="summary-section card" style={{ marginTop: 12 }}>
+            <h3 className="summary-heading">Scribe</h3>
+            <div className="summary-row">
+              <span>Chosen</span><strong>{state.scribeName ?? 'Any approved scribe'}</strong>
             </div>
-          )}
+          </div>
         </div>
 
         {/* ── Right: price + pay ── */}

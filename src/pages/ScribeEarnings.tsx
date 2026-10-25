@@ -12,23 +12,24 @@ import { useScribePortal } from '../lib/scribeStore'
 import { inr } from '../lib/pricing'
 
 export default function ScribeEarnings() {
-  const { profile, payouts, updateProfile } = useScribePortal()
+  const { profile, payouts, withdraw } = useScribePortal()
   const [withdrawing, setWithdrawing] = useState(false)
-  const [payoutSuccess, setPayoutSuccess] = useState(false)
+  const [paidOut, setPaidOut] = useState(0)
+  const [error, setError] = useState('')
 
-  function handleWithdrawal() {
+  async function handleWithdrawal() {
     if (profile.walletBalance <= 0) return
+    const amount = profile.walletBalance
     setWithdrawing(true)
-    setTimeout(() => {
-      const amount = profile.walletBalance
-      updateProfile({
-        walletBalance: 0,
-        lifetimeEarnings: profile.lifetimeEarnings + amount,
-      })
-      setWithdrawing(false)
-      setPayoutSuccess(true)
-      setTimeout(() => setPayoutSuccess(false), 4000)
-    }, 1500)
+    setError('')
+    setPaidOut(0)
+    const err = await withdraw()
+    setWithdrawing(false)
+    if (err) setError(err)
+    else {
+      setPaidOut(amount)
+      setTimeout(() => setPaidOut(0), 6000)
+    }
   }
 
   return (
@@ -60,7 +61,7 @@ export default function ScribeEarnings() {
             onClick={handleWithdrawal}
             id="withdraw-btn"
           >
-            {withdrawing ? 'Transferring to UPI…' : `Withdraw to ${profile.upiVpa}`}
+            {withdrawing ? 'Transferring to UPI…' : profile.upiVpa ? `Withdraw to ${profile.upiVpa}` : 'Add a UPI ID to withdraw'}
           </button>
         </div>
 
@@ -83,11 +84,12 @@ export default function ScribeEarnings() {
         </div>
       </div>
 
-      {payoutSuccess && (
+      {paidOut > 0 && (
         <div className="alert alert--ok" style={{ marginTop: 20 }}>
-          ✓ Payout transfer initiated! Funds sent to <strong>{profile.upiVpa}</strong> via IMPS/UPI network.
+          ✓ {inr(paidOut)} recorded as sent to <strong>{profile.upiVpa}</strong>.
         </div>
       )}
+      {error && <div className="alert alert--warn" role="alert" style={{ marginTop: 20 }}>{error}</div>}
 
       {/* Payout Transactions History Table */}
       <div className="card payouts-table-card" style={{ marginTop: 28 }}>
@@ -109,14 +111,13 @@ export default function ScribeEarnings() {
               </tr>
             </thead>
             <tbody>
+              {payouts.length === 0 && (
+                <tr><td colSpan={6} style={{ color: 'var(--muted)' }}>No earnings yet. Accepted orders appear here as soon as they are in escrow.</td></tr>
+              )}
               {payouts.map(tx => (
                 <tr key={tx.id}>
                   <td><strong>{tx.id}</strong></td>
-                  <td>
-                    <Link to={`/track/${tx.orderId}`} className="table-link">
-                      #{tx.orderId}
-                    </Link>
-                  </td>
+                  <td>{tx.orderId === '—' ? '—' : `#${tx.orderId}`}</td>
                   <td><strong style={{ color: 'var(--ink)' }}>{inr(tx.amount)}</strong></td>
                   <td>
                     <span className={`status-pill pill--${tx.status.toLowerCase().replace(' ', '-')}`}>
@@ -124,7 +125,7 @@ export default function ScribeEarnings() {
                     </span>
                   </td>
                   <td style={{ color: 'var(--muted)', fontSize: 13 }}>{tx.date}</td>
-                  <td style={{ fontFamily: 'monospace', fontSize: 13 }}>{tx.upiVpa}</td>
+                  <td style={{ fontFamily: 'monospace', fontSize: 13 }}>{tx.status === 'Transferred' ? profile.upiVpa : '—'}</td>
                 </tr>
               ))}
             </tbody>

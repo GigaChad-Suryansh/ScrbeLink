@@ -20,6 +20,12 @@ export class LogisticsService {
   private phoneFor = (orderId: string) => this.customerPhones.get(orderId) ?? '+919876543210'
 
   constructor() {
+    const env = typeof process !== 'undefined' ? process.env : {}
+    if (env.NODE_ENV === 'test' || env.SEED_DEMO === 'true') this.seedDemoData()
+  }
+
+  /** Sample scribes and one dispute so the admin screens are not empty in a demo. Off by default. */
+  private seedDemoData(): void {
     // Seed sample scribe approvals
     this.scribeApprovals.set('S-2041', {
       scribeId: 'S-2041',
@@ -149,7 +155,7 @@ export class LogisticsService {
     reason: DisputeRecord['reason'],
     unboxingVideoUrl: string,
     customerNotes: string,
-    customerName = 'Student #882',
+    customerName = 'Customer',
     scribeId = 'S-2041',
     amount = 350
   ): DisputeRecord {
@@ -219,6 +225,48 @@ export class LogisticsService {
     } else {
       scribe.isSuspended = false
     }
+    return scribe
+  }
+
+  getScribe(scribeId: string): AdminScribeApproval | undefined {
+    return this.scribeApprovals.get(scribeId)
+  }
+
+  /** A scribe signs up or edits their profile. New scribes start unapproved; a new sample card needs re-review. */
+  upsertScribe(p: {
+    scribeId: string
+    phone: string
+    name: string
+    college: string
+    sampleCardText: string
+    upiVpa: string
+    specialties: string[]
+    sampleImageUrl?: string
+  }): AdminScribeApproval {
+    const existing = this.scribeApprovals.get(p.scribeId)
+    const scribe: AdminScribeApproval = existing ?? {
+      scribeId: p.scribeId,
+      tag: p.scribeId,
+      handwritingSampleUrl: '',
+      isApproved: false,
+      strikes: 0,
+      isSuspended: false,
+      name: p.name,
+      college: p.college,
+      sampleCardText: p.sampleCardText,
+    }
+    const newImage = p.sampleImageUrl !== undefined && p.sampleImageUrl !== existing?.handwritingSampleUrl
+    if (existing && (existing.sampleCardText !== p.sampleCardText || newImage)) scribe.isApproved = false
+    if (p.sampleImageUrl !== undefined) scribe.handwritingSampleUrl = p.sampleImageUrl
+    Object.assign(scribe, {
+      name: p.name,
+      college: p.college,
+      sampleCardText: p.sampleCardText,
+      phone: p.phone,
+      upiVpa: p.upiVpa,
+      specialties: p.specialties,
+    })
+    this.scribeApprovals.set(p.scribeId, scribe)
     return scribe
   }
 

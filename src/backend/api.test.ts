@@ -43,7 +43,15 @@ function client(base: string) {
     assert.equal(ok.status, 200, `otp verify: ${JSON.stringify(ok.body)}`)
     return ok.body.token
   }
-  return { call, login }
+  /** Pays for an order through the test gateway, which moves it from Draft to Paid. */
+  const pay = async (token: string, orderId: string): Promise<void> => {
+    const order = (await call('GET', `/api/orders/${orderId}`, { token })).body.order
+    const init = await call('POST', '/api/payment/upi/initiate', { token, body: { orderId, amount: order.customerTotal } })
+    assert.equal(init.status, 200, `initiate: ${JSON.stringify(init.body)}`)
+    const done = await call('POST', '/api/payment/upi/verify', { token, body: { paymentId: init.body.payment.paymentId } })
+    assert.equal(done.status, 200, `verify: ${JSON.stringify(done.body)}`)
+  }
+  return { call, login, pay }
 }
 
 const ADMIN = '+919000000001'
@@ -68,6 +76,12 @@ describe('API', () => {
     custB = await api.login(CUSTOMER_B)
     scribe1 = await api.login(SCRIBE_1, 'scribe')
     scribe2 = await api.login(SCRIBE_2, 'scribe')
+    // Scribes can only take work after an admin approves their handwriting card.
+    for (const t of [scribe1, scribe2]) {
+      const put = await api.call('PUT', '/api/scribe/me', { token: t, body: { name: 'Test Scribe', college: 'Test College', sampleText: 'The quick brown fox jumps.', upiVpa: 'test@okaxis', specialties: ['Science'] } })
+      assert.equal(put.status, 200, JSON.stringify(put.body))
+      assert.equal((await api.call('POST', `/api/admin/scribes/${put.body.profile.id}/verify`, { token: admin, body: { isApproved: true } })).status, 200)
+    }
   })
   after(() => close(ctx.server))
 
@@ -175,6 +189,8 @@ describe('API', () => {
       assert.equal(r.status, 201)
       orderId = r.body.order.id
       otp = r.body.order.deliveryOtp
+      assert.equal(r.body.order.status, 'Draft', 'not paid yet')
+      await api.pay(custA, orderId)
       assert.match(orderId, /^SL-\d{4}$/)
       assert.match(otp, /^\d{6}$/)
       assert.equal(r.body.order.customerTotal, 150)
@@ -301,6 +317,7 @@ describe('API', () => {
     test('pays the scribe after 24 hours', async () => {
       const created = await api.call('POST', '/api/orders/create', { token: admin, body: { words: 400 } })
       const id = created.body.order.id
+      await api.pay(admin, id)
       const step = (nextStatus: string, extra = {}) => api.call('POST', `/api/orders/${id}/transition`, { token: admin, body: { nextStatus, ...extra } })
       assert.equal((await step('Accepted', { scribeId: 'S-TESTAA' })).status, 200)
       assert.equal((await step('Writing')).status, 200)
@@ -317,6 +334,7 @@ describe('API', () => {
   describe('rush protocol', () => {
     test('a missed check-in strikes the scribe and takes the order away', async () => {
       const id = (await api.call('POST', '/api/orders/create', { token: admin, body: { words: 400 } })).body.order.id
+      await api.pay(admin, id)
       const step = (nextStatus: string, extra = {}) => api.call('POST', `/api/orders/${id}/transition`, { token: admin, body: { nextStatus, ...extra } })
       await step('Accepted', { scribeId: 'S-GHOST1' })
       await step('Writing')

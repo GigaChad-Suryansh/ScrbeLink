@@ -6,9 +6,10 @@
  * - Freeze escrow release until review
  */
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { globalLogistics } from '../backend/logisticsService'
+import { api } from '../lib/api'
+import { useScribePortal } from '../lib/scribeStore'
 import { checkFile, uploadHint } from '../lib/checkUpload'
 import type { DisputeRecord } from '../shared/logisticsDisputes'
 
@@ -16,30 +17,70 @@ export default function DisputeFiling() {
   const { orderId } = useParams<{ orderId: string }>()
   const nav = useNavigate()
 
-  const [targetOrderId, setTargetOrderId] = useState(orderId || 'SL-5830')
+  const { orders } = useScribePortal()
+  const [targetOrderId, setTargetOrderId] = useState(orderId || '')
   const [reason, setReason] = useState<DisputeRecord['reason']>('MISSING_PAGES')
   const [notes, setNotes] = useState('')
   // No default: a claim needs a real, validated video (rule 4).
   const [videoFile, setVideoFile] = useState<string>('')
+  /** Server URL of the uploaded video. */
+  const [videoUrl, setVideoUrl] = useState('')
+  const [uploading, setUploading] = useState(false)
+  const [submitError, setSubmitError] = useState('')
+  const [busy, setBusy] = useState(false)
   const [videoError, setVideoError] = useState('')
   const [submitted, setSubmitted] = useState(false)
 
-  function handleSubmit(e: React.FormEvent) {
+  // Redirect after a moment, but never once the person has already moved elsewhere.
+  useEffect(() => {
+    if (!submitted) return
+    const t = setTimeout(() => nav(`/track/${targetOrderId.trim()}`), 2000)
+    return () => clearTimeout(t)
+  }, [submitted, nav, targetOrderId])
+
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (!videoFile) {
+    if (!videoUrl) {
       setVideoError('Attach your continuous unboxing video to file a claim.')
       return
     }
-    globalLogistics.fileDispute(
-      targetOrderId,
-      reason,
-      `https://storage.scribelink.in/unboxing/${encodeURIComponent(videoFile)}`,
-      notes || 'Package was inspected on arrival at college gate.'
-    )
-    setSubmitted(true)
-    setTimeout(() => {
-      nav(`/track/${targetOrderId}`)
-    }, 2000)
+    setBusy(true)
+    setSubmitError('')
+    try {
+      await api('POST', '/api/disputes/file', {
+        as: 'customer',
+        body: { orderId: targetOrderId.trim(), reason, unboxingVideoUrl: videoUrl, customerNotes: notes },
+      })
+      setSubmitted(true)
+    } catch (err) {
+      setSubmitError((err as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function onVideoPicked(input: HTMLInputElement) {
+    const f = input.files?.[0]
+    if (!f) return
+    setVideoError('')
+    const verdict = await checkFile(f, 'video')
+    if (!verdict.ok) {
+      setVideoError(verdict.error)
+      setVideoFile('')
+      setVideoUrl('')
+      input.value = ''
+      return
+    }
+    setUploading(true)
+    try {
+      const r = await api<{ url: string }>('POST', '/api/uploads/video', { as: 'customer', raw: f, headers: { 'x-file-name': encodeURIComponent(f.name) } })
+      setVideoUrl(r.url)
+      setVideoFile(f.name)
+    } catch (err) {
+      setVideoError((err as Error).message)
+    } finally {
+      setUploading(false)
+    }
   }
 
   return (
@@ -58,13 +99,16 @@ export default function DisputeFiling() {
         <form onSubmit={handleSubmit} className="card" style={{ padding: 24, marginTop: 24 }}>
           <div className="field">
             <label htmlFor="order-id-input">Order Reference ID</label>
+            <datalist id="delivered-orders">
+              {orders.filter(o => o.status === 'Delivered').map(o => <option key={o.id} value={o.id}>{o.title}</option>)}
+            </datalist>
             <input
               id="order-id-input"
               type="text"
               required
               value={targetOrderId}
               onChange={e => setTargetOrderId(e.target.value)}
-              placeholder="e.g. SL-5830"
+              placeholder="e.g. SL-1A2B3C" list="delivered-orders"
             />
           </div>
 
@@ -95,24 +139,11 @@ export default function DisputeFiling() {
                 type="file"
                 accept=".mp4,.mov"
                 style={{ display: 'none' }}
-                onChange={async e => {
-                  const input = e.target
-                  const f = input.files?.[0]
-                  if (!f) return
-                  const verdict = await checkFile(f, 'video')
-                  if (verdict.ok) {
-                    setVideoError('')
-                    setVideoFile(f.name)
-                  } else {
-                    setVideoError(verdict.error)
-                    setVideoFile('')
-                    input.value = ''
-                  }
-                }}
+                onChange={e => onVideoPicked(e.target)}
               />
               <span style={{ fontSize: 32 }}>📹</span>
               <p style={{ fontWeight: 600, margin: '6px 0 2px' }}>
-                {videoFile ? `Attached: ${videoFile}` : 'Upload video showing intact seal opening'}
+                {uploading ? 'Uploading video…' : videoFile ? `Attached: ${videoFile}` : 'Upload video showing intact seal opening'}
               </p>
               <span style={{ fontSize: 12, color: 'var(--muted)' }}>
                 Rule 4: continuous single-take video required for escrow refund. {uploadHint('video')}.
@@ -134,9 +165,10 @@ export default function DisputeFiling() {
             />
           </div>
 
+          {submitError && <div className="alert alert--warn" role="alert" style={{ marginTop: 16 }}>{submitError}</div>}
           <div style={{ display: 'flex', gap: 12, marginTop: 24 }}>
-            <button type="submit" className="btn btn-primary full" id="submit-dispute-btn" disabled={!videoFile}>
-              Lock Escrow &amp; File Claim
+            <button type="submit" className="btn btn-primary full" id="submit-dispute-btn" disabled={!videoUrl || uploading || busy}>
+              {busy ? 'Filing…' : 'Lock Escrow & File Claim'}
             </button>
             <Link to={`/track/${targetOrderId}`} className="btn btn-ghost full" style={{ textAlign: 'center' }}>
               Cancel

@@ -20,10 +20,24 @@ const STAGES: { key: OrderStatus; label: string; desc: string }[] = [
 
 export default function OrderTracker() {
   const { orderId } = useParams<{ orderId: string }>()
-  const { orders } = useScribePortal()
-  const [activeTabId, setActiveTabId] = useState<string>(orderId || 'SL-7412')
+  const { orders, loading, loadError } = useScribePortal()
+  const [picked, setPicked] = useState<string | null>(null)
 
-  const order = orders.find(o => o.id === activeTabId) || orders[0]
+  const order = orders.find(o => o.id === (picked ?? orderId)) ?? (orderId ? undefined : orders[0])
+
+  if (loading) return <p className="section-sub">Loading your orders…</p>
+  if (!order) {
+    return (
+      <div className="card empty-state" style={{ padding: 32 }}>
+        {loadError && <p className="alert alert--warn" role="alert">{loadError}</p>}
+        <h2 style={{ fontSize: 22 }}>{orderId ? `Order ${orderId} was not found` : 'No orders yet'}</h2>
+        <p className="section-sub" style={{ margin: '8px 0 18px' }}>
+          {orderId ? 'It may belong to a different account.' : 'Your orders will show up here as soon as you place one.'}
+        </p>
+        <Link to="/order/upload" className="btn btn-primary">Place an order</Link>
+      </div>
+    )
+  }
 
   const currentStageIdx = STAGES.findIndex(s => s.key === order.status)
 
@@ -38,15 +52,14 @@ export default function OrderTracker() {
           </p>
         </div>
 
-        {/* Quick order switcher for demo testing */}
-        <div className="order-switcher">
+        {orders.length > 1 && <div className="order-switcher">
           <label htmlFor="order-select" style={{ fontSize: 13, fontWeight: 600, color: 'var(--muted)' }}>
-            Switch demo order:
+            Your orders:
           </label>
           <select
             id="order-select"
             value={order.id}
-            onChange={e => setActiveTabId(e.target.value)}
+            onChange={e => setPicked(e.target.value)}
             className="select-input"
           >
             {orders.map(o => (
@@ -55,7 +68,7 @@ export default function OrderTracker() {
               </option>
             ))}
           </select>
-        </div>
+        </div>}
       </div>
 
       {/* 5-Step Progress Stepper */}
@@ -116,7 +129,7 @@ export default function OrderTracker() {
 
             {order.status === 'Delivered' && (
               <div className="delivered-alert">
-                <span>🎉 Notes handed over at college gate. Escrow will automatically release to the scribe in 24 hours if no dispute is opened.</span>
+                <span>🎉 Notes handed over at college gate. Escrow will automatically release to the scribe in 24 hours if no dispute is opened. <Link to={`/dispute/${order.id}`}><strong>Report a problem</strong></Link></span>
               </div>
             )}
           </div>

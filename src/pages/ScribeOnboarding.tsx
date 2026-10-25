@@ -7,8 +7,9 @@
  * - Subject specialties selection
  */
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
+import { api } from '../lib/api'
 import { useScribePortal } from '../lib/scribeStore'
 import { checkFile, uploadHint } from '../lib/checkUpload'
 
@@ -23,18 +24,26 @@ const SUBJECT_OPTIONS = [
   'Computer Science & Code',
 ]
 
+/** The form only mounts once the saved profile has loaded, so typing is never overwritten. */
 export default function ScribeOnboarding() {
-  const { profile, updateProfile } = useScribePortal()
+  const { loading } = useScribePortal()
+  return loading ? <p className="section-sub">Loading your profile…</p> : <OnboardingForm />
+}
+
+function OnboardingForm() {
+  const { profile, saveProfile } = useScribePortal()
   const nav = useNavigate()
 
   const [name, setName] = useState(profile.name)
-  const [phone, setPhone] = useState(profile.phone)
   const [college, setCollege] = useState(profile.college)
   const [upiVpa, setUpiVpa] = useState(profile.upiVpa)
-  const [sampleText, setSampleText] = useState(profile.sampleText || "Newton's second law: F = ma. The acceleration of a body is directly proportional to the net force.")
+  const [sampleText, setSampleText] = useState(profile.sampleText || '')
   const [specialties, setSpecialties] = useState<string[]>(profile.specialties)
-  const [sampleFileName, setSampleFileName] = useState<string>('sample_card_dtu.jpg')
+  const [sampleImageUrl, setSampleImageUrl] = useState<string | undefined>(profile.sampleImageUrl)
+  const [uploading, setUploading] = useState(false)
   const [sampleError, setSampleError] = useState('')
+  const [formError, setFormError] = useState('')
+  const [saving, setSaving] = useState(false)
   const [savedSuccess, setSavedSuccess] = useState(false)
 
   function toggleSpecialty(subj: string) {
@@ -45,21 +54,41 @@ export default function ScribeOnboarding() {
     }
   }
 
-  function handleSave(e: React.FormEvent) {
+  useEffect(() => {
+    if (!savedSuccess) return
+    const t = setTimeout(() => nav('/scribe/dashboard'), 1500)
+    return () => clearTimeout(t)
+  }, [savedSuccess, nav])
+
+  async function handleSave(e: React.FormEvent) {
     e.preventDefault()
-    updateProfile({
-      name,
-      phone,
-      college,
-      upiVpa,
-      sampleText,
-      specialties,
-      isApproved: true,
-    })
+    setFormError('')
+    setSaving(true)
+    const err = await saveProfile({ name, college, upiVpa, sampleText, specialties, sampleImageUrl })
+    setSaving(false)
+    if (err) return setFormError(err)
     setSavedSuccess(true)
-    setTimeout(() => {
-      nav('/scribe/dashboard')
-    }, 1200)
+  }
+
+  async function onSamplePicked(input: HTMLInputElement) {
+    const f = input.files?.[0]
+    if (!f) return
+    setSampleError('')
+    const verdict = await checkFile(f, 'image')
+    if (!verdict.ok) {
+      setSampleError(verdict.error)
+      input.value = ''
+      return
+    }
+    setUploading(true)
+    try {
+      const r = await api<{ url: string }>('POST', '/api/uploads/sample', { as: 'scribe', raw: f, headers: { 'x-file-name': encodeURIComponent(f.name) } })
+      setSampleImageUrl(r.url)
+    } catch (e) {
+      setSampleError((e as Error).message)
+    } finally {
+      setUploading(false)
+    }
   }
 
   return (
@@ -86,18 +115,6 @@ export default function ScribeOnboarding() {
               value={name}
               onChange={e => setName(e.target.value)}
               placeholder="Your name"
-            />
-          </div>
-
-          <div className="field">
-            <label htmlFor="scribe-phone">WhatsApp / Phone Number</label>
-            <input
-              id="scribe-phone"
-              type="text"
-              required
-              value={phone}
-              onChange={e => setPhone(e.target.value)}
-              placeholder="+91 98765 43210"
             />
           </div>
 
@@ -162,25 +179,17 @@ export default function ScribeOnboarding() {
                 type="file"
                 accept=".png,.jpg,.jpeg,.webp"
                 style={{ display: 'none' }}
-                onChange={async e => {
-                  const input = e.target
-                  const f = input.files?.[0]
-                  if (!f) return
-                  const verdict = await checkFile(f, 'image')
-                  if (verdict.ok) {
-                    setSampleError('')
-                    setSampleFileName(f.name)
-                  } else {
-                    setSampleError(verdict.error)
-                    input.value = ''
-                  }
-                }}
+                onChange={e => onSamplePicked(e.target)}
               />
-              <span style={{ fontSize: 28 }}>🖋️</span>
+              {sampleImageUrl ? (
+                <img src={sampleImageUrl} alt="Your handwriting sample" style={{ maxHeight: 140, borderRadius: 10 }} />
+              ) : (
+                <span style={{ fontSize: 28 }}>🖋️</span>
+              )}
               <p style={{ fontWeight: 600, margin: '6px 0 2px' }}>
-                {sampleFileName ? `File: ${sampleFileName}` : 'Upload handwritten sample image'}
+                {uploading ? 'Uploading…' : sampleImageUrl ? 'Sample photo uploaded' : 'Upload a photo of your handwriting'}
               </p>
-              <span style={{ fontSize: 12, color: 'var(--muted)' }}>Click to replace sample image. {uploadHint('image')}.</span>
+              <span style={{ fontSize: 12, color: 'var(--muted)' }}>Click to {sampleImageUrl ? 'replace' : 'choose'} the photo. {uploadHint('image')}.</span>
             </div>
             {sampleError && <p role="alert" style={{ color: 'var(--warn)', fontSize: 13, marginTop: 6 }}>{sampleError}</p>}
 
@@ -202,19 +211,20 @@ export default function ScribeOnboarding() {
               <div className="paper sample-live-card">
                 <div className="paper-margin" />
                 <p className="scribble font-caveat">{sampleText || 'Write neat notes for your peers.'}</p>
-                <div className="paper-tag">Sample card · {name} ({college.split(' ')[0]})</div>
+                <div className="paper-tag">Sample card · {name || 'Your name'}</div>
               </div>
             </div>
 
             {savedSuccess && (
               <div className="alert alert--ok" style={{ marginTop: 16 }}>
-                ✓ Profile &amp; UPI settings saved! Redirecting to Scribe Dashboard...
+                ✓ Saved. An admin will review your handwriting card; you can take orders once it is approved.
               </div>
             )}
+            {formError && <div className="alert alert--warn" role="alert" style={{ marginTop: 16 }}>{formError}</div>}
 
             <div className="form-actions" style={{ marginTop: 20 }}>
-              <button type="submit" className="btn btn-primary full" id="save-scribe-profile">
-                Save &amp; Activate Scribe Profile
+              <button type="submit" className="btn btn-primary full" id="save-scribe-profile" disabled={saving || uploading}>
+                {saving ? 'Saving…' : 'Save & submit for approval'}
               </button>
               <Link to="/scribe/dashboard" className="btn btn-ghost full" style={{ marginTop: 8, textAlign: 'center' }}>
                 Cancel &amp; Go to Dashboard
