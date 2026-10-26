@@ -1,298 +1,234 @@
 /**
  * backend/logisticsService.ts
- * Logistics & Courier Partner Integration (Porter / Borzo simulator):
- * - Creates courier dispatch tasks with gate drop directions
- * - Generates and verifies Delivery OTPs
- * - Handles gate-drop photo uploads and signature proof
- * - Triggers WhatsApp / SMS alerts
+ * Scribe records, courier dispatch, delivery codes, disputes and the message log, in Postgres.
+ * The courier and the SMS/WhatsApp gateway are still simulated.
  */
 
+import type { Queryable } from './db'
 import { constantTimeEqual, randomDigits, randomToken } from '../shared/random'
 import type { CourierTask, NotificationLog, DisputeRecord, AdminScribeApproval } from '../shared/logisticsDisputes'
+import { adjustStrikes, type DisputeOutcome } from './scheduler'
 
-export class LogisticsService {
-  private courierTasks = new Map<string, CourierTask>()
-  private disputes = new Map<string, DisputeRecord>()
-  private notifications: NotificationLog[] = []
-  private scribeApprovals = new Map<string, AdminScribeApproval>()
-  /** Who to message for each order. Falls back to the demo number only when unknown. */
-  private customerPhones = new Map<string, string>()
-  private phoneFor = (orderId: string) => this.customerPhones.get(orderId) ?? '+919876543210'
+// ── Scribes ──────────────────────────────────────────────────────────────────
 
-  constructor() {
-    const env = typeof process !== 'undefined' ? process.env : {}
-    if (env.NODE_ENV === 'test' || env.SEED_DEMO === 'true') this.seedDemoData()
-  }
+const SCRIBE_SELECT = `
+  SELECT s.*, COALESCE(k.strikes, 0) AS strikes, COALESCE(k.is_suspended, false) AS is_suspended
+  FROM scribes s LEFT JOIN scribe_strikes k ON k.scribe_id = s.scribe_id`
 
-  /** Sample scribes and one dispute so the admin screens are not empty in a demo. Off by default. */
-  private seedDemoData(): void {
-    // Seed sample scribe approvals
-    this.scribeApprovals.set('S-2041', {
-      scribeId: 'S-2041',
-      name: 'Ananya R.',
-      college: 'Delhi Technological University (DTU)',
-      tag: 'S-2041',
-      sampleCardText: "Newton's second law: F = ma. The acceleration of a body is directly proportional to the net force.",
-      handwritingSampleUrl: '/samples/s2041.jpg',
-      isApproved: true,
-      strikes: 0,
-      isSuspended: false,
-    })
+const toScribe = (r: any): AdminScribeApproval => ({
+  scribeId: r.scribe_id,
+  name: r.name,
+  college: r.college,
+  tag: r.tag,
+  sampleCardText: r.sample_card_text,
+  handwritingSampleUrl: r.sample_image_url,
+  isApproved: r.is_approved,
+  strikes: r.strikes,
+  isSuspended: r.is_suspended,
+  phone: r.phone ?? undefined,
+  upiVpa: r.upi_vpa ?? undefined,
+  specialties: r.specialties,
+})
 
-    this.scribeApprovals.set('S-1887', {
-      scribeId: 'S-1887',
-      name: 'Rohan M.',
-      college: 'IIT Delhi',
-      tag: 'S-1887',
-      sampleCardText: 'The French Revolution began in 1789 with the storming of the Bastille.',
-      handwritingSampleUrl: '/samples/s1887.jpg',
-      isApproved: true,
-      strikes: 1,
-      isSuspended: false,
-    })
-
-    this.scribeApprovals.set('S-9011', {
-      scribeId: 'S-9011',
-      name: 'Pooja K.',
-      college: 'Netaji Subhas University of Technology (NSUT)',
-      tag: 'S-9011',
-      sampleCardText: 'Integration by parts formula: uv - integral v du.',
-      handwritingSampleUrl: '/samples/s9011.jpg',
-      isApproved: false,
-      strikes: 0,
-      isSuspended: false,
-    })
-
-    // Seed sample dispute
-    this.disputes.set('DISP-101', {
-      id: 'DISP-101',
-      orderId: 'SL-7412',
-      openedByUserId: 'usr-customer-99',
-      customerName: 'Student #4092',
-      scribeId: 'S-2041',
-      scribeName: 'Ananya R.',
-      amount: 248,
-      reason: 'MISSING_PAGES',
-      unboxingVideoUrl: 'https://storage.scribelink.in/unboxing/SL-7412.mp4',
-      customerNotes: 'Page 5 and 6 of Macroeconomics unit 3 were skipped in the envelope.',
-      status: 'PENDING_REVIEW',
-      openedAt: '3 hours ago',
-    })
-  }
-
-  // ── Courier Dispatch (Porter / Borzo) ──────────────────────────────────────
-
-  createCourierDispatch(
-    orderId: string,
-    dropGate = 'Gate 1, DTU Main Campus',
-    pickupAddress = 'Hostel Block 4, DTU',
-    partner: 'Borzo' | 'Porter' = 'Borzo',
-    /** Reuse the order's own OTP so the customer sees one code everywhere. */
-    orderOtp?: string,
-    customerPhone?: string
-  ): CourierTask {
-    const trackingId = `${partner.toUpperCase()}-${randomDigits(6)}`
-    const deliveryOtp = orderOtp ?? randomDigits(6)
-    if (customerPhone) this.customerPhones.set(orderId, customerPhone)
-
-    const task: CourierTask = {
-      trackingId,
-      courierPartner: partner,
-      orderId,
-      pickupAddress,
-      dropGate,
-      courierRiderName: partner === 'Borzo' ? 'Ramesh Kumar (Borzo Rider)' : 'Suraj Singh (Porter Fleet)',
-      courierRiderPhone: '+91 98111 22334',
-      deliveryOtp,
-      status: 'OUT_FOR_DELIVERY',
-      createdAt: new Date().toISOString(),
-    }
-
-    this.courierTasks.set(orderId, task)
-
-    // Notify Customer via WhatsApp / SMS
-    this.sendNotification(
-      this.phoneFor(orderId),
-      'WHATSAPP',
-      'COURIER_DISPATCHED',
-      `📦 ScribeLink: Courier ${task.courierRiderName} is on the way to ${dropGate}. Your Delivery OTP is ${deliveryOtp}.`
-    )
-
-    return task
-  }
-
-  confirmGateDelivery(orderId: string, providedOtp: string, gateDropPhotoUrl?: string): { success: boolean; task?: CourierTask; error?: string } {
-    const task = this.courierTasks.get(orderId)
-    if (!task) return { success: false, error: 'Courier task not found for order' }
-
-    if (typeof providedOtp !== 'string' || !constantTimeEqual(task.deliveryOtp, providedOtp.trim())) {
-      return { success: false, error: 'Invalid Delivery OTP! Handover denied.' }
-    }
-
-    task.status = 'DELIVERED_AT_GATE'
-    task.deliveredAt = new Date().toISOString()
-    task.gateDropPhotoUrl = gateDropPhotoUrl || 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="300" height="200" viewBox="0 0 300 200"><rect width="300" height="200" fill="%23e2e8f0"/><text x="150" y="100" font-family="sans-serif" font-size="14" font-weight="bold" fill="%23475569" text-anchor="middle">GATE DROP PHOTO VERIFIED</text></svg>'
-
-    // Alert Customer
-    this.sendNotification(
-      this.phoneFor(orderId),
-      'WHATSAPP',
-      'DELIVERY_CONFIRMED',
-      `🎉 ScribeLink: Your manuscript has been safely handed over at ${task.dropGate}. 24-hour dispute window has begun.`
-    )
-
-    return { success: true, task }
-  }
-
-  getCourierTask(orderId: string): CourierTask | undefined {
-    return this.courierTasks.get(orderId)
-  }
-
-  // ── Unboxing Video Dispute Management ──────────────────────────────────────
-
-  fileDispute(
-    orderId: string,
-    reason: DisputeRecord['reason'],
-    unboxingVideoUrl: string,
-    customerNotes: string,
-    customerName = 'Customer',
-    scribeId = 'S-2041',
-    amount = 350
-  ): DisputeRecord {
-    const disputeId = `DISP-${randomToken(3)}`
-    const dispute: DisputeRecord = {
-      id: disputeId,
-      orderId,
-      openedByUserId: 'usr-cust',
-      customerName,
-      scribeId,
-      scribeName: scribeId,
-      amount,
-      reason,
-      unboxingVideoUrl,
-      customerNotes,
-      status: 'PENDING_REVIEW',
-      openedAt: 'Just now',
-    }
-
-    this.disputes.set(disputeId, dispute)
-
-    // Alert Admin & Scribe
-    this.sendNotification(
-      '+919876543210',
-      'SMS',
-      'DISPUTE_FILED',
-      `⚠️ ScribeLink: A dispute (${disputeId}) was opened on Order #${orderId}. Escrow release is frozen pending video review.`
-    )
-
-    return dispute
-  }
-
-  resolveDispute(
-    disputeId: string,
-    decision: 'REFUNDED_TO_CUSTOMER' | 'RELEASED_TO_SCRIBE' | 'SPLIT',
-    adminNotes: string
-  ): DisputeRecord {
-    const dispute = this.disputes.get(disputeId)
-    if (!dispute) throw new Error('Dispute record not found')
-
-    dispute.status = decision
-    dispute.adminNotes = adminNotes
-    dispute.resolvedAt = new Date().toISOString()
-
-    return dispute
-  }
-
-  getAllDisputes(): DisputeRecord[] {
-    return Array.from(this.disputes.values())
-  }
-
-  // ── Admin Panel Operations ─────────────────────────────────────────────────
-
-  verifyScribeCard(scribeId: string, isApproved: boolean): AdminScribeApproval {
-    const scribe = this.scribeApprovals.get(scribeId)
-    if (!scribe) throw new Error('Scribe not found')
-    scribe.isApproved = isApproved
-    return scribe
-  }
-
-  manageScribeStrike(scribeId: string, delta: number): AdminScribeApproval {
-    const scribe = this.scribeApprovals.get(scribeId)
-    if (!scribe) throw new Error('Scribe not found')
-    scribe.strikes = Math.max(0, scribe.strikes + delta)
-    if (scribe.strikes >= 3) {
-      scribe.isSuspended = true
-    } else {
-      scribe.isSuspended = false
-    }
-    return scribe
-  }
-
-  getScribe(scribeId: string): AdminScribeApproval | undefined {
-    return this.scribeApprovals.get(scribeId)
-  }
-
-  /** A scribe signs up or edits their profile. New scribes start unapproved; a new sample card needs re-review. */
-  upsertScribe(p: {
-    scribeId: string
-    phone: string
-    name: string
-    college: string
-    sampleCardText: string
-    upiVpa: string
-    specialties: string[]
-    sampleImageUrl?: string
-  }): AdminScribeApproval {
-    const existing = this.scribeApprovals.get(p.scribeId)
-    const scribe: AdminScribeApproval = existing ?? {
-      scribeId: p.scribeId,
-      tag: p.scribeId,
-      handwritingSampleUrl: '',
-      isApproved: false,
-      strikes: 0,
-      isSuspended: false,
-      name: p.name,
-      college: p.college,
-      sampleCardText: p.sampleCardText,
-    }
-    const newImage = p.sampleImageUrl !== undefined && p.sampleImageUrl !== existing?.handwritingSampleUrl
-    if (existing && (existing.sampleCardText !== p.sampleCardText || newImage)) scribe.isApproved = false
-    if (p.sampleImageUrl !== undefined) scribe.handwritingSampleUrl = p.sampleImageUrl
-    Object.assign(scribe, {
-      name: p.name,
-      college: p.college,
-      sampleCardText: p.sampleCardText,
-      phone: p.phone,
-      upiVpa: p.upiVpa,
-      specialties: p.specialties,
-    })
-    this.scribeApprovals.set(p.scribeId, scribe)
-    return scribe
-  }
-
-  getAllScribes(): AdminScribeApproval[] {
-    return Array.from(this.scribeApprovals.values())
-  }
-
-  // ── Notification Engine (WhatsApp / SMS) ───────────────────────────────────
-
-  sendNotification(recipient: string, channel: 'WHATSAPP' | 'SMS', templateName: string, content: string): NotificationLog {
-    const log: NotificationLog = {
-      id: `NOTIF-${Date.now()}-${randomToken(2)}`,
-      channel,
-      recipient,
-      templateName,
-      content,
-      sentAt: new Date().toLocaleTimeString(),
-      status: 'DELIVERED',
-    }
-    this.notifications.unshift(log)
-    return log
-  }
-
-  getNotificationLogs(): NotificationLog[] {
-    return this.notifications.slice(0, 25)
-  }
+export async function getScribe(q: Queryable, scribeId: string): Promise<AdminScribeApproval | undefined> {
+  const rows = await q.query(`${SCRIBE_SELECT} WHERE s.scribe_id = $1`, [scribeId])
+  return rows[0] ? toScribe(rows[0]) : undefined
 }
 
-export const globalLogistics = new LogisticsService()
+export async function getAllScribes(q: Queryable): Promise<AdminScribeApproval[]> {
+  return (await q.query(`${SCRIBE_SELECT} ORDER BY s.created_at, s.scribe_id`)).map(toScribe)
+}
+
+/** A scribe signs up or edits their profile. New scribes start unapproved; a new sample card needs re-review. */
+export async function upsertScribe(
+  q: Queryable,
+  p: { scribeId: string; phone: string; name: string; college: string; sampleCardText: string; upiVpa: string; specialties: string[]; sampleImageUrl?: string },
+): Promise<AdminScribeApproval> {
+  const existing = await getScribe(q, p.scribeId)
+  const newImage = p.sampleImageUrl !== undefined && p.sampleImageUrl !== existing?.handwritingSampleUrl
+  const changedCard = !!existing && (existing.sampleCardText !== p.sampleCardText || newImage)
+  const image = p.sampleImageUrl ?? existing?.handwritingSampleUrl ?? ''
+  await q.query(
+    `INSERT INTO scribes (scribe_id, phone, name, college, tag, sample_card_text, sample_image_url, upi_vpa, specialties)
+     VALUES ($1,$2,$3,$4,$1,$5,$6,$7,$8::jsonb)
+     ON CONFLICT (scribe_id) DO UPDATE SET
+       name = $3, college = $4, sample_card_text = $5, sample_image_url = $6, upi_vpa = $7, specialties = $8::jsonb,
+       phone = $2, is_approved = CASE WHEN $9 THEN false ELSE scribes.is_approved END`,
+    [p.scribeId, p.phone, p.name, p.college, p.sampleCardText, image, p.upiVpa, JSON.stringify(p.specialties), changedCard],
+  )
+  return (await getScribe(q, p.scribeId))!
+}
+
+export async function verifyScribeCard(q: Queryable, scribeId: string, isApproved: boolean): Promise<AdminScribeApproval> {
+  const rows = await q.query('UPDATE scribes SET is_approved = $2 WHERE scribe_id = $1 RETURNING scribe_id', [scribeId, isApproved])
+  if (!rows.length) throw new Error('Scribe not found')
+  return (await getScribe(q, scribeId))!
+}
+
+export async function manageScribeStrike(q: Queryable, scribeId: string, delta: number): Promise<AdminScribeApproval> {
+  if (!(await getScribe(q, scribeId))) throw new Error('Scribe not found')
+  await adjustStrikes(q, scribeId, delta, `Admin ${delta > 0 ? 'issued' : 'pardoned'} a strike`)
+  return (await getScribe(q, scribeId))!
+}
+
+// ── Courier dispatch ─────────────────────────────────────────────────────────
+
+const DEMO_PHONE = '+919876543210'
+
+export async function createCourierDispatch(
+  q: Queryable,
+  orderId: string,
+  dropGate = 'Gate 1, DTU Main Campus',
+  pickupAddress = 'Hostel Block 4, DTU',
+  partner: 'Borzo' | 'Porter' = 'Borzo',
+  /** Reuse the order's own code so the customer sees one code everywhere. */
+  orderOtp?: string,
+  customerPhone?: string,
+): Promise<CourierTask> {
+  const deliveryOtp = orderOtp ?? randomDigits(6)
+  const task: CourierTask = {
+    trackingId: `${partner.toUpperCase()}-${randomDigits(6)}`,
+    courierPartner: partner,
+    orderId,
+    pickupAddress,
+    dropGate,
+    courierRiderName: partner === 'Borzo' ? 'Ramesh Kumar (Borzo Rider)' : 'Suraj Singh (Porter Fleet)',
+    courierRiderPhone: '+91 98111 22334',
+    deliveryOtp,
+    status: 'OUT_FOR_DELIVERY',
+    createdAt: new Date().toISOString(),
+  }
+  await q.query(
+    'INSERT INTO courier_tasks (order_id, task) VALUES ($1,$2::jsonb) ON CONFLICT (order_id) DO UPDATE SET task = $2::jsonb',
+    [orderId, JSON.stringify(task)],
+  )
+  await sendNotification(
+    q,
+    customerPhone ?? DEMO_PHONE,
+    'WHATSAPP',
+    'COURIER_DISPATCHED',
+    `📦 ScribeLink: Courier ${task.courierRiderName} is on the way to ${dropGate}. Your Delivery OTP is ${deliveryOtp}.`,
+  )
+  return task
+}
+
+export async function getCourierTask(q: Queryable, orderId: string): Promise<CourierTask | undefined> {
+  const rows = await q.query<{ task: CourierTask }>('SELECT task FROM courier_tasks WHERE order_id = $1', [orderId])
+  return rows[0]?.task
+}
+
+export async function confirmGateDelivery(
+  q: Queryable,
+  orderId: string,
+  providedOtp: string,
+  gateDropPhotoUrl?: string,
+  customerPhone?: string,
+): Promise<{ success: boolean; task?: CourierTask; error?: string }> {
+  const task = await getCourierTask(q, orderId)
+  if (!task) return { success: false, error: 'Courier task not found for order' }
+  if (typeof providedOtp !== 'string' || !constantTimeEqual(task.deliveryOtp, providedOtp.trim())) {
+    return { success: false, error: 'Invalid Delivery OTP! Handover denied.' }
+  }
+
+  task.status = 'DELIVERED_AT_GATE'
+  task.deliveredAt = new Date().toISOString()
+  task.gateDropPhotoUrl =
+    gateDropPhotoUrl ||
+    'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="300" height="200" viewBox="0 0 300 200"><rect width="300" height="200" fill="%23e2e8f0"/><text x="150" y="100" font-family="sans-serif" font-size="14" font-weight="bold" fill="%23475569" text-anchor="middle">GATE DROP PHOTO VERIFIED</text></svg>'
+  await q.query('UPDATE courier_tasks SET task = $2::jsonb WHERE order_id = $1', [orderId, JSON.stringify(task)])
+  await sendNotification(
+    q,
+    customerPhone ?? DEMO_PHONE,
+    'WHATSAPP',
+    'DELIVERY_CONFIRMED',
+    `🎉 ScribeLink: Your manuscript has been safely handed over at ${task.dropGate}. 24-hour dispute window has begun.`,
+  )
+  return { success: true, task }
+}
+
+// ── Disputes ─────────────────────────────────────────────────────────────────
+
+export async function fileDispute(
+  q: Queryable,
+  orderId: string,
+  reason: DisputeRecord['reason'],
+  unboxingVideoUrl: string,
+  customerNotes: string,
+  customerName = 'Customer',
+  scribeId = '',
+  amount = 0,
+  scribeName = scribeId,
+): Promise<DisputeRecord> {
+  const dispute: DisputeRecord = {
+    id: `DISP-${randomToken(3)}`,
+    orderId,
+    openedByUserId: 'customer',
+    customerName,
+    scribeId,
+    scribeName,
+    amount,
+    reason,
+    unboxingVideoUrl,
+    customerNotes,
+    status: 'PENDING_REVIEW',
+    openedAt: new Date().toISOString(),
+  }
+  await q.query('INSERT INTO disputes (id, order_id, status, record) VALUES ($1,$2,$3,$4::jsonb)', [dispute.id, orderId, dispute.status, JSON.stringify(dispute)])
+  await sendNotification(
+    q,
+    DEMO_PHONE,
+    'SMS',
+    'DISPUTE_FILED',
+    `⚠️ ScribeLink: A dispute (${dispute.id}) was opened on Order #${orderId}. Escrow release is frozen pending video review.`,
+  )
+  return dispute
+}
+
+export async function getAllDisputes(q: Queryable): Promise<DisputeRecord[]> {
+  return (await q.query<{ record: DisputeRecord; status: string }>('SELECT record, status FROM disputes ORDER BY created_at DESC, id')).map((r) => ({ ...r.record, status: r.status as DisputeRecord['status'] }))
+}
+
+export async function resolveDispute(q: Queryable, disputeId: string, decision: DisputeOutcome, adminNotes: string): Promise<DisputeRecord> {
+  const rows = await q.query<{ record: DisputeRecord }>('SELECT record FROM disputes WHERE id = $1 FOR UPDATE', [disputeId])
+  if (!rows.length) throw new Error('Dispute record not found')
+  const resolved: DisputeRecord = { ...rows[0].record, status: decision, adminNotes, resolvedAt: new Date().toISOString() }
+  await q.query('UPDATE disputes SET status = $2, record = $3::jsonb WHERE id = $1', [disputeId, decision, JSON.stringify(resolved)])
+  return resolved
+}
+
+// ── Message log (WhatsApp / SMS) ─────────────────────────────────────────────
+
+export async function sendNotification(q: Queryable, recipient: string, channel: 'WHATSAPP' | 'SMS', templateName: string, content: string): Promise<NotificationLog> {
+  const log: NotificationLog = {
+    id: `NOTIF-${Date.now()}-${randomToken(2)}`,
+    channel,
+    recipient,
+    templateName,
+    content,
+    sentAt: new Date().toLocaleTimeString(),
+    status: 'DELIVERED',
+  }
+  await q.query('INSERT INTO notifications (record) VALUES ($1::jsonb)', [JSON.stringify(log)])
+  return log
+}
+
+export async function getNotificationLogs(q: Queryable): Promise<NotificationLog[]> {
+  return (await q.query<{ record: NotificationLog }>('SELECT record FROM notifications ORDER BY id DESC LIMIT 25')).map((r) => r.record)
+}
+
+// ── Demo data ────────────────────────────────────────────────────────────────
+
+/** Sample scribes so a fresh demo has something to show. Only used when SEED_DEMO=true. */
+export async function seedDemoData(q: Queryable): Promise<void> {
+  const samples = [
+    { id: 'S-2041', name: 'Ananya R.', college: 'Delhi Technological University (DTU)', text: "Newton's second law: F = ma. The acceleration of a body is directly proportional to the net force.", approved: true },
+    { id: 'S-1887', name: 'Rohan M.', college: 'IIT Delhi', text: 'The French Revolution began in 1789 with the storming of the Bastille.', approved: true },
+    { id: 'S-9011', name: 'Pooja K.', college: 'Netaji Subhas University of Technology (NSUT)', text: 'Integration by parts formula: uv - integral v du.', approved: false },
+  ]
+  for (const s of samples) {
+    await q.query(
+      `INSERT INTO scribes (scribe_id, name, college, tag, sample_card_text, is_approved) VALUES ($1,$2,$3,$1,$4,$5) ON CONFLICT DO NOTHING`,
+      [s.id, s.name, s.college, s.text, s.approved],
+    )
+  }
+}

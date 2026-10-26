@@ -4,6 +4,7 @@ import assert from 'node:assert/strict'
 import type { AddressInfo } from 'node:net'
 import type { Server } from 'node:http'
 import { createApp } from './server'
+import { testDb } from './testDb'
 
 // Covers what the web app relies on: listing orders, scribe sign-up and wallet, and uploads.
 
@@ -13,7 +14,7 @@ const MP4 = Buffer.concat([Buffer.from([0, 0, 0, 24]), Buffer.from('ftypmp42'), 
 describe('web app wiring', () => {
   let server: Server
   let base = ''
-  let admin = '', cust = '', other = '', scribe = ''
+  let admin = '', cust = '', other = '', scribe = '', scribeB = ''
 
   const call = async (method: string, path: string, o: { token?: string; body?: unknown; raw?: Buffer; name?: string } = {}) => {
     const headers: Record<string, string> = {}
@@ -40,7 +41,8 @@ describe('web app wiring', () => {
   }
 
   before(async () => {
-    server = await new Promise<Server>((resolve) => { const s = createApp().listen(0, () => resolve(s)) })
+    const db = await testDb()
+    server = await new Promise<Server>((resolve) => { const s = createApp(db).listen(0, () => resolve(s)) })
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
     admin = await login('+919000000001', 'admin')
     cust = await login('+919000000010', 'customer')
@@ -108,7 +110,7 @@ describe('web app wiring', () => {
   })
 
   test('an order requested for one scribe is hidden from the others', async () => {
-    const other2 = await login('+919000000031', 'scribe')
+    const other2 = (scribeB = await login('+919000000031', 'scribe'))
     await call('PUT', '/api/scribe/me', { token: other2, body: profile })
     const myId = (await call('GET', '/api/scribe/me', { token: other2 })).body.profile.id
     await call('POST', `/api/admin/scribes/${myId}/verify`, { token: admin, body: { isApproved: true } })
@@ -174,5 +176,73 @@ describe('web app wiring', () => {
     const ok = await call('POST', '/api/disputes/file', { token: cust, body: { orderId: id, reason: 'OTHER', unboxingVideoUrl: up.body.url, customerNotes: 'x' } })
     assert.equal(ok.status, 201)
     assert.equal(ok.body.dispute.customerName, 'Customer', 'no name is taken from the client')
+  })
+
+  test('a scribe who dispatched on time is never struck by a late timer', async () => {
+    const strikes = (await call('GET', `/api/scribes/${scribeId}/strikes`, { token: scribe })).body.strikes.strikes
+    await call('POST', '/api/cron/trigger-jobs', { token: admin, body: { simulatedTimestamp: new Date(Date.now() + 200 * 3_600_000).toISOString() } })
+    assert.equal((await call('GET', `/api/scribes/${scribeId}/strikes`, { token: scribe })).body.strikes.strikes, strikes)
+  })
+
+  test('two withdrawals at the same moment pay out once', async () => {
+    const id = (await call('POST', '/api/orders/create', { token: cust, body: { words: 1000 } })).body.order.id
+    await pay(cust, id)
+    const step = (nextStatus: string) => call('POST', `/api/orders/${id}/transition`, { token: scribe, body: { nextStatus } })
+    await step('Accepted'); await step('Writing')
+    await call('POST', '/api/logistics/dispatch', { token: scribe, body: { orderId: id } })
+    const code = (await call('GET', `/api/orders/${id}`, { token: cust })).body.order.deliveryOtp
+    await call('POST', '/api/logistics/confirm-delivery', { token: scribe, body: { orderId: id, deliveryOtp: code } })
+    await call('POST', '/api/cron/trigger-jobs', { token: admin, body: { simulatedTimestamp: new Date(Date.now() + 25 * 3_600_000).toISOString() } })
+
+    const before = (await call('GET', '/api/scribe/me', { token: scribe })).body.walletBalance
+    assert.ok(before > 0)
+    const countBefore = (await call('GET', '/api/scribe/me', { token: scribe })).body.payouts.filter((p: any) => p.status === 'Transferred').length
+    const results = await Promise.all([1, 2, 3].map(() => call('POST', '/api/scribe/withdraw', { token: scribe })))
+    assert.equal(results.filter((r) => r.status === 200).length, 1, JSON.stringify(results.map((r) => [r.status, r.body.withdrawn, r.body.error])) + ' before=' + before)
+    const me = (await call('GET', '/api/scribe/me', { token: scribe })).body
+    assert.equal(me.walletBalance, 0)
+    assert.equal(me.payouts.filter((p: any) => p.status === 'Transferred').length, countBefore + 1)
+  })
+
+  test('two scribes accepting the same order at once: one wins', async () => {
+    const other2 = scribeB // signed up and approved in an earlier test
+    const id = (await call('POST', '/api/orders/create', { token: cust, body: { words: 300 } })).body.order.id
+    await pay(cust, id)
+    const accept = (t: string) => call('POST', `/api/orders/${id}/transition`, { token: t, body: { nextStatus: 'Accepted' } })
+    const rs = await Promise.all([accept(scribe), accept(other2)])
+    assert.deepEqual(rs.map((r) => r.status).sort(), [200, 403])
+    const order = (await call('GET', `/api/orders/${id}`, { token: admin })).body.order
+    assert.equal(order.timeline.filter((t: any) => t.status === 'Accepted').length, 1)
+  })
+
+  test('paying twice does not charge or move the order twice', async () => {
+    const id = (await call('POST', '/api/orders/create', { token: cust, body: { words: 200 } })).body.order.id
+    const order = (await call('GET', `/api/orders/${id}`, { token: cust })).body.order
+    const init = await call('POST', '/api/payment/upi/initiate', { token: cust, body: { orderId: id, amount: order.customerTotal } })
+    const verify = () => call('POST', '/api/payment/upi/verify', { token: cust, body: { paymentId: init.body.payment.paymentId } })
+    const rs = await Promise.all([verify(), verify()])
+    assert.deepEqual(rs.map((r) => r.status), [200, 200])
+    const after = (await call('GET', `/api/orders/${id}`, { token: cust })).body.order
+    assert.equal(after.timeline.filter((t: any) => t.status === 'Paid').length, 1)
+    assert.equal((await call('POST', '/api/payment/upi/initiate', { token: cust, body: { orderId: id, amount: order.customerTotal } })).status, 409, 'an order is paid for once')
+  })
+
+  test('two disputes at once: one is filed, the other is refused', async () => {
+    const id = (await call('POST', '/api/orders/create', { token: cust, body: { words: 300 } })).body.order.id
+    await pay(cust, id)
+    const step = (t: string, nextStatus: string) => call('POST', `/api/orders/${id}/transition`, { token: t, body: { nextStatus } })
+    await step(scribe, 'Accepted'); await step(scribe, 'Writing'); await step(scribe, 'Dispatched'); await step(admin, 'Delivered')
+    const up = await call('POST', '/api/uploads/video', { token: cust, raw: MP4, name: 'v.mp4' })
+    const file = () => call('POST', '/api/disputes/file', { token: cust, body: { orderId: id, reason: 'OTHER', unboxingVideoUrl: up.body.url } })
+    const rs = await Promise.all([file(), file()])
+    assert.deepEqual(rs.map((r) => r.status).sort(), [201, 400], 'the loser sees the order is no longer Delivered')
+    assert.equal((await call('GET', '/api/admin/disputes', { token: admin })).body.disputes.filter((d: any) => d.orderId === id).length, 1)
+  })
+
+  test('health reports the database', async () => {
+    const h = await call('GET', '/api/health')
+    assert.equal(h.status, 200)
+    assert.equal(h.body.database, 'ok')
+    assert.equal(h.body.storage, 'pglite')
   })
 })

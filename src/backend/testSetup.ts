@@ -7,3 +7,5 @@ process.env.CRON_SECRET = 'cron-secret-for-tests-only'
 delete process.env.MEDIA_HOSTS
 delete process.env.ALLOW_TEST_PAYMENTS
 delete process.env.DEMO_OTP
+// Tests make many payments and withdrawals from one address; the login limits stay at their real values.
+process.env.SENSITIVE_LIMIT = '2000'

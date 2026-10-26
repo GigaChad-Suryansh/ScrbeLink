@@ -4,18 +4,23 @@ import assert from 'node:assert/strict'
 import type { AddressInfo } from 'node:net'
 import type { Server } from 'node:http'
 import { createApp } from './server'
-import { globalScheduler } from './scheduler'
+import * as sched from './scheduler'
+import { testDb } from './testDb'
 import { scribeIdFor, signSession } from './security'
 
 // ── Test client ──────────────────────────────────────────────────────────────
 
 interface Reply { status: number; body: any; headers: Headers }
 
-function startServer(): Promise<{ base: string; server: Server }> {
+async function startServer(): Promise<{ base: string; server: Server }> {
+  const db = await testDb()
   return new Promise((resolve) => {
-    const server = createApp().listen(0, () => resolve({ base: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, server }))
+    const server = createApp(db).listen(0, () => resolve({ base: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, server }))
   })
 }
+
+/** Reads an escrow row straight from the database. */
+const escrowOf = async (orderId: string) => sched.getEscrowRecord(await testDb(false), orderId)
 
 const close = (s: Server) => new Promise<void>((r) => { s.closeAllConnections(); s.close(() => r()) })
 
@@ -267,7 +272,7 @@ describe('API', () => {
       assert.equal(ok.status, 200)
       const order = await api.call('GET', `/api/orders/${orderId}`, { token: custA })
       assert.equal(order.body.order.status, 'Delivered')
-      assert.equal(globalScheduler.getEscrowRecord(orderId)?.isReleased, false)
+      assert.equal((await escrowOf(orderId))?.isReleased, false)
     })
 
     test('dispute evidence must be a public https link', async () => {
@@ -289,7 +294,7 @@ describe('API', () => {
       disputeId = r.body.dispute.id
       assert.equal(r.body.dispute.scribeId, scribeIdFor(SCRIBE_1), 'scribe comes from the order, not the request')
       assert.equal(r.body.dispute.amount, 150, 'amount comes from the order, not the request')
-      assert.equal(globalScheduler.getEscrowRecord(orderId)?.isDisputed, true)
+      assert.equal((await escrowOf(orderId))?.isDisputed, true)
       assert.equal((await api.call('GET', `/api/orders/${orderId}`, { token: custA })).body.order.status, 'Disputed')
       assert.equal((await api.call('POST', '/api/disputes/file', { token: custA, body: { orderId, reason: 'OTHER', unboxingVideoUrl: VIDEO } })).status, 400, 'no second dispute once Disputed')
     })
@@ -298,7 +303,7 @@ describe('API', () => {
       const later = new Date(Date.now() + 25 * 3_600_000).toISOString()
       const r = await api.call('POST', '/api/cron/trigger-jobs', { token: admin, body: { simulatedTimestamp: later } })
       assert.equal(r.status, 200)
-      assert.equal(globalScheduler.getEscrowRecord(orderId)?.isReleased, false)
+      assert.equal((await escrowOf(orderId))?.isReleased, false)
     })
 
     test('an admin refund keeps the money from the scribe and closes the order', async () => {
@@ -308,7 +313,7 @@ describe('API', () => {
       assert.equal((await api.call('POST', `/api/admin/disputes/${disputeId}/resolve`, { token: admin, body: { decision: 'RELEASED_TO_SCRIBE' } })).status, 409, 'cannot be re-ruled')
       const later = new Date(Date.now() + 72 * 3_600_000).toISOString()
       await api.call('POST', '/api/cron/trigger-jobs', { token: admin, body: { simulatedTimestamp: later } })
-      assert.equal(globalScheduler.getEscrowRecord(orderId)?.isReleased, false)
+      assert.equal((await escrowOf(orderId))?.isReleased, false)
       assert.equal((await api.call('GET', `/api/orders/${orderId}`, { token: custA })).body.order.status, 'Closed')
     })
   })
@@ -325,9 +330,9 @@ describe('API', () => {
       assert.equal((await step('Delivered')).status, 200)
 
       const early = await api.call('POST', '/api/cron/trigger-jobs', { token: admin, body: { simulatedTimestamp: new Date(Date.now() + 23 * 3_600_000).toISOString() } })
-      assert.equal(globalScheduler.getEscrowRecord(id)?.isReleased, false, `released too early: ${JSON.stringify(early.body.escrowReleased)}`)
+      assert.equal((await escrowOf(id))?.isReleased, false, `released too early: ${JSON.stringify(early.body.escrowReleased)}`)
       await api.call('POST', '/api/cron/trigger-jobs', { token: admin, body: { simulatedTimestamp: new Date(Date.now() + 25 * 3_600_000).toISOString() } })
-      assert.equal(globalScheduler.getEscrowRecord(id)?.isReleased, true)
+      assert.equal((await escrowOf(id))?.isReleased, true)
     })
   })
 

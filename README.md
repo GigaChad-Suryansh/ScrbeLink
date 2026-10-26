@@ -44,3 +44,7 @@ src/
 - Add-ons for drawings, graphs, college template printing, and rigid packaging on 20+ page orders
 - Customers supply all content; scribes never write cover pages or credentials
 - No direct contact between customer and scribe; payments held in escrow
+
+## Data storage
+
+Orders, scribes, escrow and payouts live in PostgreSQL. Set `DATABASE_URL` in production. In development the API uses an embedded Postgres (PGlite) that saves to `.data/pglite`, so data survives restarts. Delete that folder to start fresh. Migrations run automatically on start.
