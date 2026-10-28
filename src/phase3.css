@@ -544,3 +544,14 @@
   }
   .node-icon { margin-bottom: 0; flex-shrink: 0; }
 }
+
+/* Scribe setup checklist */
+.setup-card { padding: 24px; margin-bottom: 20px; }
+.setup-card h3 { font-size: 17px; margin-bottom: 16px; }
+.setup-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 18px; }
+.setup-steps li { display: flex; gap: 14px; align-items: flex-start; opacity: .55; }
+.setup-steps li.current, .setup-steps li.done { opacity: 1; }
+.setup-steps p { margin: 2px 0 8px; font-size: 14px; color: var(--muted); }
+.setup-mark { flex: none; width: 28px; height: 28px; border-radius: 50%; border: 1.5px solid var(--line, #d2d2d7); display: grid; place-items: center; font-size: 13px; font-weight: 600; }
+.setup-steps li.done .setup-mark { background: var(--ok); border-color: var(--ok); color: #fff; }
+.setup-steps li.current .setup-mark { border-color: var(--brand); color: var(--brand); }

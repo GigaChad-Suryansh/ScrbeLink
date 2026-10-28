@@ -8,6 +8,7 @@
 
 import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
+import Icon from '../components/Icons'
 import { api } from '../lib/api'
 import { useScribePortal } from '../lib/scribeStore'
 import { checkFile, uploadHint } from '../lib/checkUpload'
@@ -93,7 +94,7 @@ export default function DisputeFiling() {
 
       {submitted ? (
         <div className="alert alert--ok" style={{ marginTop: 24 }}>
-          ✓ Dispute successfully filed! Escrow funds for #{targetOrderId} have been locked. Redirecting to Order Tracker...
+          Dispute filed. Escrow funds for #{targetOrderId} have been locked. Redirecting to Order Tracker...
         </div>
       ) : (
         <form onSubmit={handleSubmit} className="card" style={{ padding: 24, marginTop: 24 }}>
@@ -141,7 +142,7 @@ export default function DisputeFiling() {
                 style={{ display: 'none' }}
                 onChange={e => onVideoPicked(e.target)}
               />
-              <span style={{ fontSize: 32 }}>📹</span>
+              <span style={{ color: 'var(--muted)' }}><Icon name="video" size={32} /></span>
               <p style={{ fontWeight: 600, margin: '6px 0 2px' }}>
                 {uploading ? 'Uploading video…' : videoFile ? `Attached: ${videoFile}` : 'Upload video showing intact seal opening'}
               </p>

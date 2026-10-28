@@ -107,7 +107,7 @@ export async function createCourierDispatch(
     customerPhone ?? DEMO_PHONE,
     'WHATSAPP',
     'COURIER_DISPATCHED',
-    `📦 ScribeLink: Courier ${task.courierRiderName} is on the way to ${dropGate}. Your Delivery OTP is ${deliveryOtp}.`,
+    `ScribeLink: Courier ${task.courierRiderName} is on the way to ${dropGate}. Your Delivery OTP is ${deliveryOtp}.`,
   )
   return task
 }
@@ -141,7 +141,7 @@ export async function confirmGateDelivery(
     customerPhone ?? DEMO_PHONE,
     'WHATSAPP',
     'DELIVERY_CONFIRMED',
-    `🎉 ScribeLink: Your manuscript has been safely handed over at ${task.dropGate}. 24-hour dispute window has begun.`,
+    `ScribeLink: Your manuscript has been safely handed over at ${task.dropGate}. 24-hour dispute window has begun.`,
   )
   return { success: true, task }
 }
@@ -179,7 +179,7 @@ export async function fileDispute(
     DEMO_PHONE,
     'SMS',
     'DISPUTE_FILED',
-    `⚠️ ScribeLink: A dispute (${dispute.id}) was opened on Order #${orderId}. Escrow release is frozen pending video review.`,
+    `ScribeLink: A dispute (${dispute.id}) was opened on Order #${orderId}. Escrow release is frozen pending video review.`,
   )
   return dispute
 }

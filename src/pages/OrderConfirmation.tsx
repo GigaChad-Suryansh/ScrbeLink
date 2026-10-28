@@ -4,6 +4,7 @@
  */
 
 import { useNavigate, Link } from 'react-router-dom'
+import Icon from '../components/Icons'
 import { useOrder } from '../lib/orderStore'
 import { inr } from '../lib/pricing'
 import { quote } from '../lib/pricing'
@@ -33,7 +34,7 @@ export default function OrderConfirmation() {
 
   return (
     <div className="wizard-step confirm-page">
-      <div className="confirm-icon" aria-hidden="true">🎉</div>
+      <div className="confirm-icon" aria-hidden="true"><Icon name="check" size={56} /></div>
       <h2 className="section-title">Order placed!</h2>
       <p className="section-sub" style={{ marginBottom: 24 }}>
         Your order is now in the queue. A scribe will accept it shortly.
@@ -74,7 +75,7 @@ export default function OrderConfirmation() {
 
       <div className="wizard-nav" style={{ marginTop: 28 }}>
         <button className="btn btn-ghost" onClick={() => nav('/')} id="confirm-home-btn">
-          ← Back to home
+          Back to home
         </button>
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
           <Link className="btn btn-primary" to={`/track/${state.orderId}`} id="confirm-track-btn">

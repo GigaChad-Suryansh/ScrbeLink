@@ -7,6 +7,7 @@
 import { useRef, useState } from 'react'
 import type { DragEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
+import Icon from '../components/Icons'
 import { useOrder } from '../lib/orderStore'
 import { sanitizeText, wordCount } from '../lib/sanitize'
 import { detectCoverPage } from '../lib/coverPage'
@@ -127,11 +128,11 @@ export default function StepUpload() {
           id="upload-input"
         />
         {loading ? (
-          <span className="upload-zone__icon">&#x23F3;</span>
+          <span className="upload-zone__icon"><Icon name="clock" size={40} /></span>
         ) : file ? (
-          <span className="upload-zone__icon">&#x2705;</span>
+          <span className="upload-zone__icon"><Icon name="check" size={40} /></span>
         ) : (
-          <span className="upload-zone__icon">&#x1F4C4;</span>
+          <span className="upload-zone__icon"><Icon name="upload" size={40} /></span>
         )}
         <p className="upload-zone__label">
           {loading

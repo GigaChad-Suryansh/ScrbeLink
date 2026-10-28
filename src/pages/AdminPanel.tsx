@@ -111,7 +111,7 @@ export default function AdminPanel() {
         </div>
 
         <Link to="/" className="btn btn-ghost" style={{ alignSelf: 'center' }}>
-          ← Return to Portal
+          Return to Portal
         </Link>
       </div>
 
@@ -130,25 +130,25 @@ export default function AdminPanel() {
           className={`admin-tab-btn ${activeTab === 'cards' ? 'tab-btn--active' : ''}`}
           onClick={() => setActiveTab('cards')}
         >
-          🖋️ Handwriting Verification ({scribes.filter(s => !s.isApproved).length} pending)
+          Handwriting verification ({scribes.filter(s => !s.isApproved).length} pending)
         </button>
         <button
           className={`admin-tab-btn ${activeTab === 'disputes' ? 'tab-btn--active' : ''}`}
           onClick={() => setActiveTab('disputes')}
         >
-          📹 Video Disputes ({disputes.filter(d => d.status === 'PENDING_REVIEW').length})
+          Video disputes ({disputes.filter(d => d.status === 'PENDING_REVIEW').length})
         </button>
         <button
           className={`admin-tab-btn ${activeTab === 'strikes' ? 'tab-btn--active' : ''}`}
           onClick={() => setActiveTab('strikes')}
         >
-          ⚡ Scribe Strike Management
+          Scribe strikes
         </button>
         <button
           className={`admin-tab-btn ${activeTab === 'notifications' ? 'tab-btn--active' : ''}`}
           onClick={() => setActiveTab('notifications')}
         >
-          📲 WhatsApp / SMS Gateway Logs ({notifications.length})
+          Message log ({notifications.length})
         </button>
       </div>
 
@@ -168,7 +168,7 @@ export default function AdminPanel() {
                     </p>
                   </div>
                   <span className={`status-pill ${s.isApproved ? 'pill--delivered' : 'pill--accepted'}`}>
-                    {s.isApproved ? '✓ VERIFIED' : '⏳ PENDING REVIEW'}
+                    {s.isApproved ? 'Verified' : 'Pending review'}
                   </span>
                 </div>
 
@@ -183,7 +183,7 @@ export default function AdminPanel() {
                   {!s.isApproved ? (
                     <>
                       <button className="btn btn-primary full" onClick={() => handleVerifyCard(s.scribeId, true)}>
-                        ✓ Approve Card
+                        Approve
                       </button>
                       <button className="btn btn-ghost full" onClick={() => handleVerifyCard(s.scribeId, false)}>
                         Reject
@@ -233,7 +233,7 @@ export default function AdminPanel() {
                   </div>
 
                   <div className="video-proof-box">
-                    <strong>📹 Unboxing Video Evidence:</strong>
+                    <strong>Unboxing video evidence:</strong>
                     <EvidenceVideo url={disp.unboxingVideoUrl} />
                   </div>
                 </div>
@@ -306,7 +306,7 @@ export default function AdminPanel() {
                     </td>
                     <td>
                       <span className={`status-pill ${s.isSuspended ? 'pill--dispatched' : 'pill--delivered'}`}>
-                        {s.isSuspended ? '⛔ SUSPENDED' : 'ACTIVE'}
+                        {s.isSuspended ? 'Suspended' : 'Active'}
                       </span>
                     </td>
                     <td>

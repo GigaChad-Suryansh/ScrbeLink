@@ -8,6 +8,7 @@
 
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import Icon from '../components/Icons'
 import { useOrder } from '../lib/orderStore'
 import { quote, inr, formatDuration } from '../lib/pricing'
 import type { UpiPaymentIntent } from '../backend/paymentGateway'
@@ -176,7 +177,7 @@ export default function StepCheckout() {
 
             <div style={{ background: '#f0fdf4', padding: '10px 12px', borderRadius: 8, border: '1px solid #bbf7d0', marginBottom: 16 }}>
               <p style={{ fontSize: 12.5, color: '#166534', margin: 0 }}>
-                🛡 <strong>Escrow Protected:</strong> Held in nodal escrow. Automatically transferred to scribe 24 hours post-delivery.
+                <strong>Escrow protected:</strong> Held in nodal escrow. Automatically transferred to scribe 24 hours post-delivery.
               </p>
             </div>
 
@@ -226,7 +227,7 @@ export default function StepCheckout() {
               </>
             ) : (
               <div style={{ textAlign: 'center', padding: '12px 0' }}>
-                <div style={{ fontSize: 32, marginBottom: 8 }}>⏳</div>
+                <div style={{ marginBottom: 8, color: 'var(--muted)' }}><Icon name="clock" size={32} /></div>
                 <h4 style={{ margin: '0 0 6px' }}>UPI Intent Triggered</h4>
                 <p style={{ fontSize: 13, color: 'var(--muted)', margin: 0 }}>
                   Approve notification on your UPI App or scanning the test intent...
@@ -243,7 +244,7 @@ export default function StepCheckout() {
 
       <div className="wizard-nav" style={{ marginTop: 16 }}>
         <button className="btn btn-ghost" onClick={onBack} disabled={paying} id="checkout-back-btn">
-          ← Back
+          Back
         </button>
         <span />
       </div>

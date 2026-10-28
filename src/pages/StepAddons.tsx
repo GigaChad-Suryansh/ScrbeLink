@@ -166,7 +166,7 @@ export default function StepAddons() {
       </div>
 
       <div className="wizard-nav">
-        <button className="btn btn-ghost" onClick={onBack} id="addons-back-btn">← Back</button>
+        <button className="btn btn-ghost" onClick={onBack} id="addons-back-btn">Back</button>
         <button className="btn btn-primary" onClick={onNext} id="addons-next-btn">
           Next: Pick a scribe →
         </button>

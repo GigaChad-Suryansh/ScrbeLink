@@ -11,6 +11,7 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useScribePortal } from '../lib/scribeStore'
 import { inr } from '../lib/pricing'
+import Icon from '../components/Icons'
 
 export default function ScribeDashboard() {
   const { profile, orders, loading, loadError, acceptOrder, startWriting, submitCheckIn, dispatchOrder, confirmDelivery } = useScribePortal()
@@ -39,40 +40,59 @@ export default function ScribeDashboard() {
       {/* Scribe Top Banner */}
       <div className="scribe-dash-header">
         <div>
-          <span className="eyebrow">Scribe Partner Workspace</span>
-          <h1 className="section-title">{profile.name ? `Welcome back, ${profile.name}` : 'Welcome to ScribeLink'}</h1>
+          <span className="eyebrow">Scribe portal</span>
+          <h1 className="section-title">{profile.name ? `Hi, ${profile.name}` : 'Welcome to ScribeLink'}</h1>
           <p className="section-sub">
             {profile.registered
-              ? <>Campus: <strong>{profile.college}</strong> · {profile.totalOrders} completed</>
-              : 'Set up your profile and handwriting card to start receiving orders.'}
+              ? <>{profile.college} · {profile.totalOrders} orders completed</>
+              : 'Finish the steps below to start receiving orders.'}
           </p>
         </div>
 
         <div className="dash-quick-stats">
           <div className="dash-stat-box card">
-            <span className="stat-label">Pending Escrow</span>
+            <span className="stat-label">In escrow</span>
             <span className="stat-val">{inr(profile.pendingEscrow)}</span>
           </div>
           <div className="dash-stat-box card">
-            <span className="stat-label">Ready Payout</span>
+            <span className="stat-label">Ready to withdraw</span>
             <span className="stat-val stat-val--ok">{inr(profile.walletBalance)}</span>
           </div>
           <Link to="/scribe/earnings" className="btn btn-primary" style={{ alignSelf: 'center' }}>
-            View Earnings ➔
+            View earnings
           </Link>
         </div>
       </div>
 
       {loadError && <div className="alert alert--warn" role="alert" style={{ marginBottom: 16 }}>{loadError}</div>}
       {actionError && <div className="alert alert--warn" role="alert" style={{ marginBottom: 16 }}>{actionError}</div>}
-      {!loading && !profile.registered && (
-        <div className="alert alert--warn" style={{ marginBottom: 16 }}>
-          You have not set up your scribe profile yet. <Link to="/scribe/onboarding"><strong>Complete it now</strong></Link> so an admin can approve your handwriting card.
-        </div>
-      )}
-      {!loading && profile.registered && !profile.isApproved && !profile.isSuspended && (
-        <div className="alert alert--warn" style={{ marginBottom: 16 }}>
-          Your handwriting card is waiting for admin approval. New orders will appear here once you are approved.
+      {!loading && !profile.isSuspended && !(profile.registered && profile.isApproved) && (
+        <div className="card setup-card">
+          <h3>Get ready to take orders</h3>
+          <ol className="setup-steps">
+            <li className={profile.registered ? 'done' : 'current'}>
+              <span className="setup-mark">{profile.registered ? <Icon name="check" size={18} /> : 1}</span>
+              <div>
+                <strong>Set up your profile</strong>
+                <p>Add your name, college, UPI ID and a handwriting sample.</p>
+                {!profile.registered && <Link to="/scribe/onboarding" className="btn btn-primary sm">Set up profile</Link>}
+              </div>
+            </li>
+            <li className={profile.isApproved ? 'done' : profile.registered ? 'current' : ''}>
+              <span className="setup-mark">{profile.isApproved ? <Icon name="check" size={18} /> : 2}</span>
+              <div>
+                <strong>Wait for approval</strong>
+                <p>An admin checks your handwriting sample, usually within a day.</p>
+              </div>
+            </li>
+            <li>
+              <span className="setup-mark">3</span>
+              <div>
+                <strong>Accept orders</strong>
+                <p>Approved scribes see available orders on this page.</p>
+              </div>
+            </li>
+          </ol>
         </div>
       )}
       {profile.isSuspended && (
@@ -84,13 +104,11 @@ export default function ScribeDashboard() {
       {/* Intake / Rush Check-in Alert Banner */}
       {activeOrders.some(o => o.status === 'Accepted' || o.status === 'Writing') && (
         <div className="urgent-action-card card">
-          <div className="urgent-badge">Action Required</div>
+          <div className="urgent-badge">Reminder</div>
           <div className="urgent-content">
-            <h3>Active Task Timers</h3>
+            <h3>While you have an active order</h3>
             <p>
-              • <strong>30-Minute Intake Rule:</strong> Verify note quality, word count, and template match before beginning transcription.
-              <br />
-              • <strong>Hourly Rush Check-ins:</strong> Upload progress snapshots every hour to prevent order reassignment.
+              Check the notes within 30 minutes of accepting. While writing, send a short progress update every hour or the order may be given to someone else.
             </p>
           </div>
         </div>
@@ -101,13 +119,13 @@ export default function ScribeDashboard() {
         {/* Left: Active In-Progress Tasks */}
         <div className="dash-column">
           <div className="column-header">
-            <h2>Your Active Assignments ({activeOrders.length})</h2>
-            <span className="muted-tag">State Machine Controlled</span>
+            <h2>Your orders ({activeOrders.length})</h2>
+            
           </div>
 
           {activeOrders.length === 0 ? (
             <div className="card empty-state">
-              <p>No orders in progress right now. Accept an order from nearby requests below!</p>
+              <p>No orders in progress. Accept one from the available orders.</p>
             </div>
           ) : (
             <div className="active-orders-list">
@@ -131,9 +149,9 @@ export default function ScribeDashboard() {
 
                   <div className="active-card-body">
                     <div className="spec-chips">
-                      <span className="spec-chip">🖊 {order.penStyle}</span>
+                      <span className="spec-chip">{order.penStyle}</span>
                       {order.addons.map(a => (
-                        <span key={a} className="spec-chip">📎 {a}</span>
+                        <span key={a} className="spec-chip">{a}</span>
                       ))}
                     </div>
 
@@ -141,7 +159,7 @@ export default function ScribeDashboard() {
                     {order.status === 'Accepted' && (
                       <div className="intake-inspection-box">
                         <div className="inspection-timer">
-                          ⏳ <strong>30-Minute Intake Inspection:</strong> {order.intakeInspectionExpiresAt ?? 'in progress'} to confirm or flag quality.
+                          <strong>Check the notes first.</strong> You have until {order.intakeInspectionExpiresAt ?? 'the intake deadline'} to confirm or flag a problem.
                         </div>
                         <p style={{ fontSize: 13, color: 'var(--muted)', marginTop: 4 }}>
                           Review the customer's text. Ensure no illicit cover pages or mismatched diagram requirements.
@@ -152,7 +170,7 @@ export default function ScribeDashboard() {
                             disabled={busyId === order.id}
                             onClick={() => act(order.id, () => startWriting(order.id))}
                           >
-                            ✓ Confirm Intake &amp; Start Writing
+                            Confirm and start writing
                           </button>
                         </div>
                       </div>
@@ -161,7 +179,7 @@ export default function ScribeDashboard() {
                     {order.status === 'Writing' && (
                       <div className="writing-checkin-box">
                         <div className="checkin-timer">
-                          ⏱ Next Hourly Rush Check-in: <strong>{order.nextCheckInDueAt || '42 mins'}</strong>
+                          Next check-in due: <strong>{order.nextCheckInDueAt || 'within the hour'}</strong>
                         </div>
                         
                         {activeCheckinOrder === order.id ? (
@@ -184,7 +202,7 @@ export default function ScribeDashboard() {
                                   }
                                 }}
                               >
-                                Submit Check-in Snapshot
+                                Submit update
                               </button>
                               <button className="btn btn-ghost" onClick={() => setActiveCheckinOrder(null)}>
                                 Cancel
@@ -197,14 +215,14 @@ export default function ScribeDashboard() {
                               className="btn btn-ghost"
                               onClick={() => setActiveCheckinOrder(order.id)}
                             >
-                              📸 Send Hourly Check-in
+                              Send progress update
                             </button>
                             <button
                               className="btn btn-primary"
                               disabled={busyId === order.id}
                               onClick={() => act(order.id, () => dispatchOrder(order.id))}
                             >
-                              📦 Mark Finished &amp; Dispatch
+                              Finished, send for delivery
                             </button>
                           </div>
                         )}
@@ -233,7 +251,7 @@ export default function ScribeDashboard() {
                             disabled={(otpEntry[order.id] ?? '').length !== 6 || busyId === order.id}
                             onClick={() => act(order.id, () => confirmDelivery(order.id, otpEntry[order.id] ?? ''), setOtpError)}
                           >
-                            Confirm Gate Delivery
+                            Confirm delivery
                           </button>
                         </div>
                         {otpError && <p className="alert alert--warn" role="alert" style={{ marginTop: 8 }}>{otpError}</p>}
@@ -249,14 +267,14 @@ export default function ScribeDashboard() {
         {/* Right: Nearby Campus Order Pool */}
         <div className="dash-column">
           <div className="column-header">
-            <h2>Nearby Campus Orders ({pendingOrders.length})</h2>
-            <span className="muted-tag">Open to approved scribes</span>
+            <h2>Available orders ({pendingOrders.length})</h2>
+            
           </div>
 
           <div className="nearby-orders-list">
             {pendingOrders.length === 0 ? (
               <div className="card empty-state">
-                <p>No new orders pending right now. Check back soon!</p>
+                <p>No orders available right now. This page refreshes on its own.</p>
               </div>
             ) : (
               pendingOrders.map(order => (
@@ -297,16 +315,16 @@ export default function ScribeDashboard() {
 
           {/* Quick link to Onboarding & Sample Card */}
           <div className="card scribe-profile-summary" style={{ marginTop: 24 }}>
-            <h3>Scribe Credential Card</h3>
+            <h3>Your handwriting card</h3>
             <p style={{ fontSize: 14, color: 'var(--muted)', marginTop: 4 }}>
-              Your handwriting card is published to customers. Keep UPI VPA updated for instant escrow releases.
+              Customers see this card when choosing a scribe.
             </p>
             <div className="sample-card-preview" style={{ marginTop: 12 }}>
               <p className="sample-scribble font-caveat">"{profile.sampleText || 'Add a handwriting sample in your profile.'}"</p>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginTop: 8 }}>
-                <span>UPI: <strong>{profile.upiVpa || 'not set'}</strong></span>
+                <span>UPI ID: <strong>{profile.upiVpa || 'not set'}</strong></span>
                 <Link to="/scribe/onboarding" style={{ color: 'var(--brand)', fontWeight: 600 }}>
-                  Edit Profile ➔
+                  Edit profile
                 </Link>
               </div>
             </div>

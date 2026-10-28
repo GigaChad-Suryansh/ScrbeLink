@@ -4,6 +4,7 @@
  * or lets any approved scribe take the order.
  */
 
+import Icon from '../components/Icons'
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useOrder } from '../lib/orderStore'
@@ -61,9 +62,9 @@ export default function StepScribe() {
             aria-pressed={selected === 'any'}
             aria-label="Any approved scribe"
           >
-            {selected === 'any' && <span className="scribe-badge scribe-badge--selected">✓ Selected</span>}
+            {selected === 'any' && <span className="scribe-badge scribe-badge--selected">Selected</span>}
             <div className="scribe-header">
-              <div className="scribe-avatar" aria-hidden="true">★</div>
+              <div className="scribe-avatar" aria-hidden="true"><Icon name="check" size={20} /></div>
               <div>
                 <p className="scribe-name">Any approved scribe</p>
                 <p className="scribe-tag">Fastest match</p>
@@ -85,7 +86,7 @@ export default function StepScribe() {
               aria-label={`Select scribe ${s.name}`}
             >
               {!s.available && <span className="scribe-badge scribe-badge--busy">Busy</span>}
-              {selected === s.id && <span className="scribe-badge scribe-badge--selected">✓ Selected</span>}
+              {selected === s.id && <span className="scribe-badge scribe-badge--selected">Selected</span>}
 
               <div className="scribe-header">
                 <div className="scribe-avatar" aria-hidden="true">{s.name[0]}</div>
@@ -111,7 +112,7 @@ export default function StepScribe() {
       )}
 
       <div className="wizard-nav">
-        <button className="btn btn-ghost" onClick={() => nav('/order/addons')} id="scribe-back-btn">← Back</button>
+        <button className="btn btn-ghost" onClick={() => nav('/order/addons')} id="scribe-back-btn">Back</button>
         <button className="btn btn-primary" onClick={onNext} disabled={!scribes} id="scribe-next-btn">
           Next: Review &amp; pay →
         </button>

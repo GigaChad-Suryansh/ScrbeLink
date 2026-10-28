@@ -9,6 +9,7 @@
 
 import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
+import Icon from '../components/Icons'
 import { api } from '../lib/api'
 import { useScribePortal } from '../lib/scribeStore'
 import { checkFile, uploadHint } from '../lib/checkUpload'
@@ -158,7 +159,7 @@ function OnboardingForm() {
                   onClick={() => toggleSpecialty(subj)}
                   className={`chip-button ${selected ? 'chip-button--active' : ''}`}
                 >
-                  {selected ? '✓ ' : '+ '} {subj}
+                  {subj}
                 </button>
               )
             })}
@@ -184,7 +185,7 @@ function OnboardingForm() {
               {sampleImageUrl ? (
                 <img src={sampleImageUrl} alt="Your handwriting sample" style={{ maxHeight: 140, borderRadius: 10 }} />
               ) : (
-                <span style={{ fontSize: 28 }}>🖋️</span>
+                <span style={{ color: 'var(--muted)' }}><Icon name="camera" size={30} /></span>
               )}
               <p style={{ fontWeight: 600, margin: '6px 0 2px' }}>
                 {uploading ? 'Uploading…' : sampleImageUrl ? 'Sample photo uploaded' : 'Upload a photo of your handwriting'}
@@ -217,7 +218,7 @@ function OnboardingForm() {
 
             {savedSuccess && (
               <div className="alert alert--ok" style={{ marginTop: 16 }}>
-                ✓ Saved. An admin will review your handwriting card; you can take orders once it is approved.
+                Saved. An admin will review your handwriting card; you can take orders once it is approved.
               </div>
             )}
             {formError && <div className="alert alert--warn" role="alert" style={{ marginTop: 16 }}>{formError}</div>}
@@ -227,7 +228,7 @@ function OnboardingForm() {
                 {saving ? 'Saving…' : 'Save & submit for approval'}
               </button>
               <Link to="/scribe/dashboard" className="btn btn-ghost full" style={{ marginTop: 8, textAlign: 'center' }}>
-                Cancel &amp; Go to Dashboard
+                Back to dashboard
               </Link>
             </div>
           </div>

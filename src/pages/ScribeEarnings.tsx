@@ -36,24 +36,24 @@ export default function ScribeEarnings() {
     <div className="earnings-page">
       <div className="earnings-top">
         <div>
-          <span className="eyebrow">Financial Settlement</span>
-          <h1 className="section-title">Earnings &amp; UPI Payouts</h1>
+          <span className="eyebrow">Earnings</span>
+          <h1 className="section-title">Your earnings</h1>
           <p className="section-sub">
-            All customer payments are locked into bank-level escrow and released directly to your UPI ID 24 hours post-delivery.
+            Customer payments are held until the notes are delivered. 24 hours later they become available to withdraw to your UPI ID.
           </p>
         </div>
 
         <Link to="/scribe/dashboard" className="btn btn-ghost" style={{ alignSelf: 'center' }}>
-          ← Back to Dashboard
+          Back to dashboard
         </Link>
       </div>
 
       {/* Financial Metrics Cards */}
       <div className="metrics-grid">
         <div className="card metric-card">
-          <div className="metric-label">Ready for Payout</div>
+          <div className="metric-label">Ready to withdraw</div>
           <div className="metric-num metric-num--brand">{inr(profile.walletBalance)}</div>
-          <p className="metric-note">Cleared from 24h dispute window</p>
+          <p className="metric-note">Past the 24-hour dispute window</p>
           <button
             className="btn btn-primary full"
             style={{ marginTop: 16 }}
@@ -61,21 +61,21 @@ export default function ScribeEarnings() {
             onClick={handleWithdrawal}
             id="withdraw-btn"
           >
-            {withdrawing ? 'Transferring to UPI…' : profile.upiVpa ? `Withdraw to ${profile.upiVpa}` : 'Add a UPI ID to withdraw'}
+            {withdrawing ? 'Sending…' : profile.upiVpa ? `Withdraw to ${profile.upiVpa}` : 'Add a UPI ID to withdraw'}
           </button>
         </div>
 
         <div className="card metric-card">
-          <div className="metric-label">Locked in Escrow</div>
+          <div className="metric-label">Held until delivery</div>
           <div className="metric-num metric-num--warn">{inr(profile.pendingEscrow)}</div>
-          <p className="metric-note">Awaiting transit &amp; gate-drop signoff</p>
+          <p className="metric-note">Released 24 hours after delivery</p>
           <div className="escrow-badge" style={{ marginTop: 22 }}>
-            🛡 Protected by ScribeLink Escrow
+            Payments are held safely until delivery
           </div>
         </div>
 
         <div className="card metric-card">
-          <div className="metric-label">Lifetime Earned</div>
+          <div className="metric-label">Total earned</div>
           <div className="metric-num">{inr(profile.lifetimeEarnings)}</div>
           <p className="metric-note">Total across {profile.totalOrders} completed manuscripts</p>
           <div style={{ marginTop: 18, fontSize: 13, color: 'var(--muted)' }}>
@@ -86,7 +86,7 @@ export default function ScribeEarnings() {
 
       {paidOut > 0 && (
         <div className="alert alert--ok" style={{ marginTop: 20 }}>
-          ✓ {inr(paidOut)} recorded as sent to <strong>{profile.upiVpa}</strong>.
+          {inr(paidOut)} recorded as sent to <strong>{profile.upiVpa}</strong>.
         </div>
       )}
       {error && <div className="alert alert--warn" role="alert" style={{ marginTop: 20 }}>{error}</div>}
@@ -94,20 +94,20 @@ export default function ScribeEarnings() {
       {/* Payout Transactions History Table */}
       <div className="card payouts-table-card" style={{ marginTop: 28 }}>
         <div className="table-header">
-          <h3>Payout &amp; Escrow Ledger</h3>
-          <span style={{ fontSize: 13, color: 'var(--muted)' }}>Automated 24-hour cycle</span>
+          <h3>Payment history</h3>
+          
         </div>
 
         <div className="table-responsive">
           <table className="payout-table">
             <thead>
               <tr>
-                <th>Transaction ID</th>
-                <th>Order Ref</th>
+                <th>Reference</th>
+                <th>Order</th>
                 <th>Amount</th>
                 <th>Status</th>
-                <th>Timestamp</th>
-                <th>Settlement UPI</th>
+                <th>Date</th>
+                <th>Sent to</th>
               </tr>
             </thead>
             <tbody>

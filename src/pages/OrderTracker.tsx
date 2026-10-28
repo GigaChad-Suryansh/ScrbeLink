@@ -4,6 +4,7 @@
  * Paid -> Accepted -> Writing -> Dispatched -> Delivered
  */
 
+import Icon from '../components/Icons'
 import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useScribePortal } from '../lib/scribeStore'
@@ -83,7 +84,7 @@ export default function OrderTracker() {
                 className={`stepper-node ${isCompleted ? 'node--done' : ''} ${isCurrent ? 'node--active' : ''}`}
               >
                 <div className="node-icon">
-                  {isCompleted ? '✓' : idx + 1}
+                  {isCompleted ? <Icon name="check" size={14} /> : idx + 1}
                 </div>
                 <div className="node-info">
                   <div className="node-title">{s.label}</div>
@@ -117,19 +118,19 @@ export default function OrderTracker() {
 
             {order.status === 'Writing' && order.nextCheckInDueAt && (
               <div className="checkin-alert">
-                <span>⚡ Active Rush Protection: Next scribe check-in due in <strong>{order.nextCheckInDueAt}</strong></span>
+                <span>Rush protection is on. Next scribe check-in due in <strong>{order.nextCheckInDueAt}</strong></span>
               </div>
             )}
 
             {order.status === 'Dispatched' && order.otp && (
               <div className="otp-alert">
-                <span>📦 Courier Dispatched: Share Delivery OTP <strong>{order.otp}</strong> with delivery person at your gate.</span>
+                <span>On its way. Share this delivery code <strong>{order.otp}</strong> with delivery person at your gate.</span>
               </div>
             )}
 
             {order.status === 'Delivered' && (
               <div className="delivered-alert">
-                <span>🎉 Notes handed over at college gate. Escrow will automatically release to the scribe in 24 hours if no dispute is opened. <Link to={`/dispute/${order.id}`}><strong>Report a problem</strong></Link></span>
+                <span>Notes handed over at the college gate. Escrow will automatically release to the scribe in 24 hours if no dispute is opened. <Link to={`/dispute/${order.id}`}><strong>Report a problem</strong></Link></span>
               </div>
             )}
           </div>
@@ -182,7 +183,7 @@ export default function OrderTracker() {
             </div>
             <div className="spec-row">
               <span>Security</span>
-              <strong style={{ color: 'var(--ok)' }}>✓ Anti-cheat protected</strong>
+              <strong style={{ color: 'var(--ok)' }}>Anti-cheat protected</strong>
             </div>
           </div>
 
@@ -192,7 +193,7 @@ export default function OrderTracker() {
               Dispute windows open upon gate arrival. Always take an unboxing video before breaking the envelope seal.
             </p>
             <Link to="/" className="btn btn-ghost full" style={{ marginTop: 12, textAlign: 'center' }}>
-              ← Return Home
+              Return Home
             </Link>
           </div>
         </div>
