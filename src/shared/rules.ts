@@ -14,6 +14,7 @@ export const RATES = {
   templatePrintCostPerSheet: 2,
   templateMarkupPerSheet: 2,
   wordsPerPage: 200,
+  minOrderPages: 10,
   pagesPerBlock: 15,
   hoursPerBlock: 18,
 } as const
@@ -48,6 +49,13 @@ export function billablePages(words: number): number {
   if (!Number.isFinite(words) || words <= 0) return 0
   return Math.ceil(words / RATES.wordsPerPage)
 }
+
+/** Every order must be at least this many billable pages. */
+export function meetsMinimum(words: number): boolean {
+  return billablePages(words) >= RATES.minOrderPages
+}
+
+export const MIN_ORDER_MESSAGE = `Orders start at ${RATES.minOrderPages} pages (more than ${(RATES.minOrderPages - 1) * RATES.wordsPerPage} words).`
 
 export function turnaroundHours(pages: number): number {
   return money((pages / RATES.pagesPerBlock) * RATES.hoursPerBlock)

@@ -18,7 +18,7 @@ import express, { type NextFunction, type Request, type Response } from 'express
 import cors from 'cors'
 import helmet from 'helmet'
 import rateLimit from 'express-rate-limit'
-import { calculateQuote, checkCoverPage, countWords, sanitizeText } from '../shared/rules'
+import { MIN_ORDER_MESSAGE, calculateQuote, checkCoverPage, meetsMinimum, countWords, sanitizeText } from '../shared/rules'
 import { validateUpload } from '../shared/upload'
 import {
   ALLOWED_TRANSITIONS,
@@ -543,6 +543,7 @@ export function createApp(db: Db) {
       graphs: optInt(b.graphs, 'graphs', 0, 100),
       customTemplate: b.customTemplate === undefined ? false : bool(b.customTemplate, 'customTemplate'),
     }
+    if (!meetsMinimum(words)) throw new ValidationError(MIN_ORDER_MESSAGE)
     const q = calculateQuote({ words, ...extras })
     const title = optStr(b.title, 'title', 120) ?? 'Manuscript Order'
     const subject = optStr(b.subject, 'subject', 60) ?? 'General'

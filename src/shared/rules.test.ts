@@ -1,6 +1,6 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { billablePages, calculateQuote, checkCoverPage, countWords, sanitizeText, turnaroundHours } from './rules'
+import { billablePages, calculateQuote, checkCoverPage, meetsMinimum, countWords, sanitizeText, turnaroundHours } from './rules'
 
 const base = { simpleDrawings: 0, complexDrawings: 0, graphs: 0, customTemplate: false }
 
@@ -74,5 +74,13 @@ describe('text checks', () => {
 
   test('ordinary study text does not', () => {
     assert.equal(checkCoverPage('Newton described how a net force changes the motion of a body.').warning, false)
+  })
+})
+
+describe('minimum order', () => {
+  test('is 10 pages', () => {
+  assert.equal(meetsMinimum(1800), false)
+  assert.equal(meetsMinimum(1801), true)
+  assert.equal(meetsMinimum(0), false)
   })
 })

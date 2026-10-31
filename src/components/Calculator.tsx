@@ -44,7 +44,7 @@ export default function Calculator() {
             onChange={(e) => setWords(Math.max(0, Math.floor(Number(e.target.value) || 0)))}
           />
           <span className="stepper-hint">
-            {q.pages > 0 ? `= ${q.pages} billable page${q.pages > 1 ? 's' : ''} (rounded up)` : 'Enter the words in your finalized text'}
+            {q.pages >= RATES.minOrderPages ? `= ${q.pages} billable pages (rounded up)` : q.pages > 0 ? `= ${q.pages} page${q.pages > 1 ? 's' : ''}. Orders start at ${RATES.minOrderPages} pages.` : 'Enter the words in your finalized text'}
           </span>
         </label>
 

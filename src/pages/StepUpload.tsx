@@ -10,6 +10,7 @@ import { useNavigate } from 'react-router-dom'
 import Icon from '../components/Icons'
 import { useOrder } from '../lib/orderStore'
 import { sanitizeText, wordCount } from '../lib/sanitize'
+import { MIN_ORDER_MESSAGE, meetsMinimum } from '../lib/pricing'
 import { detectCoverPage } from '../lib/coverPage'
 import { checkFile } from '../lib/checkUpload'
 import type { UploadedDoc } from '../lib/orderStore'
@@ -151,6 +152,12 @@ export default function StepUpload() {
       {/* Error */}
       {error && <div className="alert alert--warn" role="alert">{error}</div>}
 
+      {doc && !meetsMinimum(doc.wordCount) && (
+        <div className="alert alert--warn" role="alert">
+          <strong>Too short to order.</strong> {MIN_ORDER_MESSAGE} Your file has about {Math.ceil(doc.wordCount / 200)} page{Math.ceil(doc.wordCount / 200) === 1 ? '' : 's'}. Add more notes to continue.
+        </div>
+      )}
+
       {/* Cover-page warning */}
       {doc?.hasCoverPageWarning && (
         <div className="alert alert--warn" role="alert">
@@ -188,7 +195,7 @@ export default function StepUpload() {
         <button
           className="btn btn-primary"
           onClick={onNext}
-          disabled={!doc || doc.wordCount === 0}
+          disabled={!doc || !meetsMinimum(doc.wordCount)}
           id="upload-next-btn"
         >
           Next: Add-ons &amp; pen &rarr;

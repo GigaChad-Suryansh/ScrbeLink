@@ -84,7 +84,7 @@ describe('web app wiring', () => {
   })
 
   test('an unapproved scribe sees no pool and cannot accept', async () => {
-    const id = (await call('POST', '/api/orders/create', { token: cust, body: { words: 600 } })).body.order.id
+    const id = (await call('POST', '/api/orders/create', { token: cust, body: { words: 2000 } })).body.order.id
     assert.equal((await call('GET', `/api/orders/${id}`, { token: cust })).body.order.status, 'Draft')
     await pay(cust, id)
     assert.equal((await call('GET', '/api/orders', { token: scribe })).body.orders.length, 0)
@@ -102,7 +102,7 @@ describe('web app wiring', () => {
 
   test('orders list is private per customer and newest first', async () => {
     assert.equal((await call('GET', '/api/orders', { token: other })).body.orders.length, 0)
-    const second = (await call('POST', '/api/orders/create', { token: cust, body: { words: 300 } })).body.order.id
+    const second = (await call('POST', '/api/orders/create', { token: cust, body: { words: 2000 } })).body.order.id
     const mine = (await call('GET', '/api/orders', { token: cust })).body.orders
     assert.equal(mine.length, 2)
     assert.equal(mine[0].id, second)
@@ -114,16 +114,16 @@ describe('web app wiring', () => {
     await call('PUT', '/api/scribe/me', { token: other2, body: profile })
     const myId = (await call('GET', '/api/scribe/me', { token: other2 })).body.profile.id
     await call('POST', `/api/admin/scribes/${myId}/verify`, { token: admin, body: { isApproved: true } })
-    const id = (await call('POST', '/api/orders/create', { token: cust, body: { words: 300, preferredScribeId: scribeId } })).body.order.id
+    const id = (await call('POST', '/api/orders/create', { token: cust, body: { words: 2000, preferredScribeId: scribeId } })).body.order.id
     await pay(cust, id)
     assert.ok((await call('GET', '/api/orders', { token: scribe })).body.orders.some((o: any) => o.id === id))
     assert.ok(!(await call('GET', '/api/orders', { token: other2 })).body.orders.some((o: any) => o.id === id))
     assert.equal((await call('POST', `/api/orders/${id}/transition`, { token: other2, body: { nextStatus: 'Accepted' } })).status, 403)
-    assert.equal((await call('POST', '/api/orders/create', { token: cust, body: { words: 300, preferredScribeId: 'S-NOBODY' } })).status, 400)
+    assert.equal((await call('POST', '/api/orders/create', { token: cust, body: { words: 2000, preferredScribeId: 'S-NOBODY' } })).status, 400)
   })
 
   test('a full job: wallet stays empty until escrow releases, then can be withdrawn once', async () => {
-    const id = (await call('POST', '/api/orders/create', { token: cust, body: { words: 1000 } })).body.order.id
+    const id = (await call('POST', '/api/orders/create', { token: cust, body: { words: 2000 } })).body.order.id
     await pay(cust, id)
     const step = (nextStatus: string) => call('POST', `/api/orders/${id}/transition`, { token: scribe, body: { nextStatus } })
     assert.equal((await step('Accepted')).status, 200)
@@ -166,7 +166,7 @@ describe('web app wiring', () => {
   })
 
   test('a dispute accepts an uploaded video but not a made-up one', async () => {
-    const id = (await call('POST', '/api/orders/create', { token: cust, body: { words: 300 } })).body.order.id
+    const id = (await call('POST', '/api/orders/create', { token: cust, body: { words: 2000 } })).body.order.id
     await pay(cust, id)
     const step = (t: string, nextStatus: string) => call('POST', `/api/orders/${id}/transition`, { token: t, body: { nextStatus } })
     await step(scribe, 'Accepted'); await step(scribe, 'Writing'); await step(scribe, 'Dispatched'); await step(admin, 'Delivered')
@@ -185,7 +185,7 @@ describe('web app wiring', () => {
   })
 
   test('two withdrawals at the same moment pay out once', async () => {
-    const id = (await call('POST', '/api/orders/create', { token: cust, body: { words: 1000 } })).body.order.id
+    const id = (await call('POST', '/api/orders/create', { token: cust, body: { words: 2000 } })).body.order.id
     await pay(cust, id)
     const step = (nextStatus: string) => call('POST', `/api/orders/${id}/transition`, { token: scribe, body: { nextStatus } })
     await step('Accepted'); await step('Writing')
@@ -206,7 +206,7 @@ describe('web app wiring', () => {
 
   test('two scribes accepting the same order at once: one wins', async () => {
     const other2 = scribeB // signed up and approved in an earlier test
-    const id = (await call('POST', '/api/orders/create', { token: cust, body: { words: 300 } })).body.order.id
+    const id = (await call('POST', '/api/orders/create', { token: cust, body: { words: 2000 } })).body.order.id
     await pay(cust, id)
     const accept = (t: string) => call('POST', `/api/orders/${id}/transition`, { token: t, body: { nextStatus: 'Accepted' } })
     const rs = await Promise.all([accept(scribe), accept(other2)])
@@ -216,7 +216,7 @@ describe('web app wiring', () => {
   })
 
   test('paying twice does not charge or move the order twice', async () => {
-    const id = (await call('POST', '/api/orders/create', { token: cust, body: { words: 200 } })).body.order.id
+    const id = (await call('POST', '/api/orders/create', { token: cust, body: { words: 2000 } })).body.order.id
     const order = (await call('GET', `/api/orders/${id}`, { token: cust })).body.order
     const init = await call('POST', '/api/payment/upi/initiate', { token: cust, body: { orderId: id, amount: order.customerTotal } })
     const verify = () => call('POST', '/api/payment/upi/verify', { token: cust, body: { paymentId: init.body.payment.paymentId } })
@@ -228,7 +228,7 @@ describe('web app wiring', () => {
   })
 
   test('two disputes at once: one is filed, the other is refused', async () => {
-    const id = (await call('POST', '/api/orders/create', { token: cust, body: { words: 300 } })).body.order.id
+    const id = (await call('POST', '/api/orders/create', { token: cust, body: { words: 2000 } })).body.order.id
     await pay(cust, id)
     const step = (t: string, nextStatus: string) => call('POST', `/api/orders/${id}/transition`, { token: t, body: { nextStatus } })
     await step(scribe, 'Accepted'); await step(scribe, 'Writing'); await step(scribe, 'Dispatched'); await step(admin, 'Delivered')

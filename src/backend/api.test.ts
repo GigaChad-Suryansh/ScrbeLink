@@ -190,7 +190,7 @@ describe('API', () => {
     let otp = ''
 
     test('a customer creates an order and sees their own delivery OTP', async () => {
-      const r = await api.call('POST', '/api/orders/create', { token: custA, body: { title: 'Physics', subject: 'Physics', words: 1000 } })
+      const r = await api.call('POST', '/api/orders/create', { token: custA, body: { title: 'Physics', subject: 'Physics', words: 2000 } })
       assert.equal(r.status, 201)
       orderId = r.body.order.id
       otp = r.body.order.deliveryOtp
@@ -198,15 +198,24 @@ describe('API', () => {
       await api.pay(custA, orderId)
       assert.match(orderId, /^SL-\d{4}$/)
       assert.match(otp, /^\d{6}$/)
-      assert.equal(r.body.order.customerTotal, 150)
+      assert.equal(r.body.order.customerTotal, 300)
       assert.equal(r.body.order.customerPhone, undefined, 'phone number is never exposed')
+    })
+
+    test('orders under 10 pages are refused', async () => {
+      for (const words of [1, 300, 1800]) {
+        const r = await api.call('POST', '/api/orders/create', { token: custA, body: { words } })
+        assert.equal(r.status, 400, `${words} words`)
+        assert.match(r.body.error, /10 pages/)
+      }
+      assert.equal((await api.call('POST', '/api/orders/create', { token: custA, body: { words: 1801 } })).status, 201)
     })
 
     test('order creation validates input', async () => {
       for (const body of [{}, { words: 0 }, { words: 'many' }, { words: 100, title: 'x'.repeat(200) }, { words: 100, customTemplate: 'yes' }]) {
         assert.equal((await api.call('POST', '/api/orders/create', { token: custA, body })).status, 400, JSON.stringify(body))
       }
-      assert.equal((await api.call('POST', '/api/orders/create', { token: scribe1, body: { words: 100 } })).status, 403, 'scribes cannot place orders')
+      assert.equal((await api.call('POST', '/api/orders/create', { token: scribe1, body: { words: 2000 } })).status, 403, 'scribes cannot place orders')
     })
 
     test('another customer cannot see the order', async () => {
@@ -293,7 +302,7 @@ describe('API', () => {
       assert.equal(r.status, 201)
       disputeId = r.body.dispute.id
       assert.equal(r.body.dispute.scribeId, scribeIdFor(SCRIBE_1), 'scribe comes from the order, not the request')
-      assert.equal(r.body.dispute.amount, 150, 'amount comes from the order, not the request')
+      assert.equal(r.body.dispute.amount, 300, 'amount comes from the order, not the request')
       assert.equal((await escrowOf(orderId))?.isDisputed, true)
       assert.equal((await api.call('GET', `/api/orders/${orderId}`, { token: custA })).body.order.status, 'Disputed')
       assert.equal((await api.call('POST', '/api/disputes/file', { token: custA, body: { orderId, reason: 'OTHER', unboxingVideoUrl: VIDEO } })).status, 400, 'no second dispute once Disputed')
@@ -320,7 +329,7 @@ describe('API', () => {
 
   describe('an undisputed delivery', () => {
     test('pays the scribe after 24 hours', async () => {
-      const created = await api.call('POST', '/api/orders/create', { token: admin, body: { words: 400 } })
+      const created = await api.call('POST', '/api/orders/create', { token: admin, body: { words: 2000 } })
       const id = created.body.order.id
       await api.pay(admin, id)
       const step = (nextStatus: string, extra = {}) => api.call('POST', `/api/orders/${id}/transition`, { token: admin, body: { nextStatus, ...extra } })
@@ -338,7 +347,7 @@ describe('API', () => {
 
   describe('rush protocol', () => {
     test('a missed check-in strikes the scribe and takes the order away', async () => {
-      const id = (await api.call('POST', '/api/orders/create', { token: admin, body: { words: 400 } })).body.order.id
+      const id = (await api.call('POST', '/api/orders/create', { token: admin, body: { words: 2000 } })).body.order.id
       await api.pay(admin, id)
       const step = (nextStatus: string, extra = {}) => api.call('POST', `/api/orders/${id}/transition`, { token: admin, body: { nextStatus, ...extra } })
       await step('Accepted', { scribeId: 'S-GHOST1' })
@@ -364,19 +373,19 @@ describe('API', () => {
   describe('payments (test mode)', () => {
     let orderId = ''
     test('the server decides the price', async () => {
-      orderId = (await api.call('POST', '/api/orders/create', { token: custA, body: { words: 1000 } })).body.order.id
+      orderId = (await api.call('POST', '/api/orders/create', { token: custA, body: { words: 2000 } })).body.order.id
       const cheap = await api.call('POST', '/api/payment/upi/initiate', { token: custA, body: { orderId, amount: 1 } })
       assert.equal(cheap.status, 400)
-      for (const amount of ['150', -150, 0, 1e12, null]) {
+      for (const amount of ['300', -300, 0, 1e12, null]) {
         assert.equal((await api.call('POST', '/api/payment/upi/initiate', { token: custA, body: { orderId, amount } })).status, 400, String(amount))
       }
-      assert.equal((await api.call('POST', '/api/payment/upi/initiate', { token: custA, body: { orderId: 'SL-1"><svg', amount: 150 } })).status, 400)
-      assert.equal((await api.call('POST', '/api/payment/upi/initiate', { token: custA, body: { orderId, amount: 150, payerVpa: 'bad vpa' } })).status, 400)
+      assert.equal((await api.call('POST', '/api/payment/upi/initiate', { token: custA, body: { orderId: 'SL-1"><svg', amount: 300 } })).status, 400)
+      assert.equal((await api.call('POST', '/api/payment/upi/initiate', { token: custA, body: { orderId, amount: 300, payerVpa: 'bad vpa' } })).status, 400)
     })
 
     test("another customer cannot pay for or read someone else's payment", async () => {
-      assert.equal((await api.call('POST', '/api/payment/upi/initiate', { token: custB, body: { orderId, amount: 150 } })).status, 404)
-      const ok = await api.call('POST', '/api/payment/upi/initiate', { token: custA, body: { orderId, amount: 150, payerVpa: 'me@okbank' } })
+      assert.equal((await api.call('POST', '/api/payment/upi/initiate', { token: custB, body: { orderId, amount: 300 } })).status, 404)
+      const ok = await api.call('POST', '/api/payment/upi/initiate', { token: custA, body: { orderId, amount: 300, payerVpa: 'me@okbank' } })
       assert.equal(ok.status, 200)
       const pid = ok.body.payment.paymentId
       assert.equal((await api.call('GET', `/api/payment/${pid}`, { token: custB })).status, 404)
@@ -458,7 +467,7 @@ describe('abuse protection', () => {
     try {
       const api = client(base)
       const admin = await api.login(ADMIN, 'admin')
-      const id = (await api.call('POST', '/api/orders/create', { token: admin, body: { words: 400 } })).body.order.id
+      const id = (await api.call('POST', '/api/orders/create', { token: admin, body: { words: 2000 } })).body.order.id
       const step = (nextStatus: string, extra = {}) => api.call('POST', `/api/orders/${id}/transition`, { token: admin, body: { nextStatus, ...extra } })
       await step('Accepted', { scribeId: 'S-TESTBB' })
       await step('Writing')
