@@ -51,10 +51,10 @@ Each phase ends with something you can run and demo. Later phases build on earli
 - Delivery code is shown to the customer only; the scribe must type it to deliver
 - Evidence videos and sample photos are stored by the API; payouts and withdrawals come from the escrow ledger
 
+## Phase 9 (done): PostgreSQL and persistent storage
+
 ## Next
-- Replace in-memory storage with PostgreSQL and persistent file storage
-- Real providers: SMS for codes, UPI gateway, courier
-- Pilot with one campus
+See [ANTIGRAVITY_ROADMAP.md](ANTIGRAVITY_ROADMAP.md) for phases 9 onward: real sign-in, notes extraction, address book, payments and refunds, Porter, notifications, ratings, support, legal and launch.
 
 ## Open questions to settle early
 - Real printing cost per sheet for the custom template add-on (assumed ₹2 in Phase 1)
