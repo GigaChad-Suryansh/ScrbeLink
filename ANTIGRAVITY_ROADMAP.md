@@ -145,9 +145,14 @@ Things a real launch needs that are not on any list yet:
 
 Minimum to take the first real order: **9, 10, 11, 12, 13, 18, 19**. Everything else can follow the pilot.
 
-## 5. Questions only you can answer
+## 5. Decisions made (by the owner)
 
-- Is the scribe paid per page by you (marketplace) or are they independent sellers? This decides GST and TDS.
-- Who pays Porter: built into the page price, or a separate delivery fee? (`pricing.ts` currently has no delivery cost.)
-- What do you do if a college bans the service?
-- Handwriting add-on printing cost per sheet (still assumed at ₹2).
+- **Scribes are paid by ScribeLink**, per page (₹20 of the ₹30). ScribeLink is the seller of record, so GST and TDS apply to ScribeLink. Get a CA to confirm before launch (Phases 12 and 16).
+- **Porter's fare is built into the price.** No separate delivery fee. `pricing.ts` must cover the Porter cost, so Phase 11 should compute the margin per distance band and the owner should check that ₹30/page still leaves room; keep a flat minimum order charge if short orders lose money.
+- **If a college bans the service, students will still use it.** Plan: deliver to a gate or nearby public point, not inside campus; keep the policy page honest (Phase 18); do not tell students how to hide use from their college.
+- **Printing add-on stays at ₹2 per sheet** for now. Revisit after the pilot with real costs.
+
+## 6. Still open
+
+- Exact Porter cost per distance band (needs a real quote from Porter).
+- Whether short or single-page orders need a minimum charge.
