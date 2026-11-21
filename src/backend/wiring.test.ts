@@ -239,6 +239,45 @@ describe('web app wiring', () => {
     assert.equal((await call('GET', '/api/admin/disputes', { token: admin })).body.disputes.filter((d: any) => d.orderId === id).length, 1)
   })
 
+  test('notes files: private, attached to the order, and deleted after the order closes', async () => {
+    const PDF = Buffer.from('%PDF-1.4\n1 0 obj<</Type/Catalog>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF')
+    assert.equal((await call('POST', '/api/uploads/notes', { token: cust, raw: Buffer.from('MZ not a pdf'), name: 'n.pdf' })).status, 400)
+    assert.equal((await call('POST', '/api/uploads/notes', { token: scribe, raw: PDF, name: 'n.pdf' })).status, 403, 'only customers upload notes')
+    const up = await call('POST', '/api/uploads/notes', { token: cust, raw: PDF, name: 'n.pdf' })
+    assert.equal(up.status, 201)
+
+    // Someone else's file cannot be attached; your own can.
+    assert.equal((await call('POST', '/api/orders/create', { token: other, body: { words: 2000, notesFileId: up.body.fileId } })).status, 400)
+    const id = (await call('POST', '/api/orders/create', { token: cust, body: { words: 2000, notesFileId: up.body.fileId } })).body.order.id
+    assert.equal((await call('GET', `/api/orders/${id}/notes`, { token: cust })).status, 200)
+    assert.equal((await call('GET', `/api/orders/${id}/notes`, { token: other })).status, 404, 'other customers cannot even see the order')
+    assert.equal((await call('GET', `/api/orders/${id}/notes`, { token: scribe })).status, 403, 'the scribe cannot read it before accepting')
+
+    await pay(cust, id)
+    const step = (nextStatus: string) => call('POST', `/api/orders/${id}/transition`, { token: scribe, body: { nextStatus } })
+    await step('Accepted')
+    const read = await call('GET', `/api/orders/${id}/notes`, { token: scribe })
+    assert.equal(read.status, 200)
+    assert.equal(read.headers.get('content-type'), 'application/pdf')
+
+    // Cancelling closes the order and starts the 7-day clock. A sweep before then keeps the file.
+    await call('POST', `/api/orders/${id}/transition`, { token: admin, body: { nextStatus: 'Cancelled' } })
+    const early = await call('POST', '/api/cron/trigger-jobs', { token: admin, body: { simulatedTimestamp: new Date(Date.now() + 3 * 86_400_000).toISOString() } })
+    assert.equal(early.status, 200)
+    assert.equal((await call('GET', `/api/orders/${id}/notes`, { token: cust })).status, 200, 'kept inside the 7 days')
+    const late = await call('POST', '/api/cron/trigger-jobs', { token: admin, body: { simulatedTimestamp: new Date(Date.now() + 8 * 86_400_000).toISOString() } })
+    assert.ok(late.body.filesDeleted >= 1)
+    assert.equal((await call('GET', `/api/orders/${id}/notes`, { token: cust })).status, 404, 'deleted after 7 days')
+  })
+
+  test('an upload that never gets attached to an order is deleted after a day', async () => {
+    const up = await call('POST', '/api/uploads/notes', { token: cust, raw: Buffer.from('plain text notes that nobody orders'), name: 'n.txt' })
+    assert.equal(up.status, 201)
+    const swept = await call('POST', '/api/cron/trigger-jobs', { token: admin, body: { simulatedTimestamp: new Date(Date.now() + 2 * 86_400_000).toISOString() } })
+    assert.ok(swept.body.filesDeleted >= 1)
+    assert.equal((await call('POST', '/api/orders/create', { token: cust, body: { words: 2000, notesFileId: up.body.fileId } })).status, 400)
+  })
+
   test('health reports the database', async () => {
     const h = await call('GET', '/api/health')
     assert.equal(h.status, 200)

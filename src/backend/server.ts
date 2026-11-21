@@ -30,6 +30,7 @@ import {
 } from '../shared/stateMachine'
 import { createDb, type Db, type Queryable } from './db'
 import { createUpiPaymentIntent, type UpiPaymentIntent } from './paymentGateway'
+import * as files from './files'
 import * as sched from './scheduler'
 import * as logi from './logisticsService'
 import {
@@ -82,6 +83,8 @@ interface OrderDoc {
   pages: number
   words: number
   deliveryOtp: string
+  /** The customer's notes file, if uploaded. Only the owner, the assigned scribe and admins can read it. */
+  notesFileId?: string
   addons: string[]
   penStyle: string
   /** If set, only this scribe sees the order in their pool. */
@@ -119,6 +122,7 @@ const orderFromRow = (r: any): OrderDoc => ({
   pages: r.pages,
   words: r.words,
   deliveryOtp: r.delivery_otp,
+  notesFileId: r.notes_file_id ?? undefined,
   addons: r.addons,
   penStyle: r.pen_style,
   preferredScribeId: r.preferred_scribe_id ?? undefined,
@@ -138,10 +142,10 @@ async function fetchOrder(q: Queryable, id: string, lock = false): Promise<Order
 async function insertOrder(q: Queryable, o: OrderDoc): Promise<void> {
   await q.query(
     `INSERT INTO orders (id, customer_phone, title, subject, status, customer_total, scribe_payout, preferred_scribe_id,
-       pages, words, delivery_otp, addons, pen_style, final_deadline, timeline, created_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13,$14,$15::jsonb,$16)`,
+       pages, words, delivery_otp, addons, pen_style, final_deadline, timeline, created_at, notes_file_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13,$14,$15::jsonb,$16,$17)`,
     [o.id, o.customerPhone ?? null, o.title, o.subject, o.status, o.customerTotal, o.scribePayout, o.preferredScribeId ?? null,
-      o.pages, o.words, o.deliveryOtp, JSON.stringify(o.addons), o.penStyle, o.finalDeadline, JSON.stringify(o.timeline), o.createdAt],
+      o.pages, o.words, o.deliveryOtp, JSON.stringify(o.addons), o.penStyle, o.finalDeadline, JSON.stringify(o.timeline), o.createdAt, o.notesFileId ?? null],
   )
 }
 
@@ -161,19 +165,16 @@ const MEDIA_PATH = /^\/api\/media\/[a-f0-9]{32}$/
 const SAMPLE_PATH = /^\/api\/samples\/[a-f0-9]{32}$/
 const IMAGE_TYPES = ['png', 'jpeg', 'webp'] as const
 
-/** Stored files are named <id>.<detected type>, so the type never comes from the client. */
-function findUpload(id: string, types: readonly string[]): { file: string; type: string } | undefined {
-  for (const type of types) {
-    const file = path.join(UPLOAD_DIR, `${id}.${type}`)
-    if (fs.existsSync(file)) return { file, type }
-  }
-  return undefined
-}
+const store = files.diskStore(UPLOAD_DIR)
 
-function storeUpload(bytes: Buffer, type: string): string {
-  fs.mkdirSync(UPLOAD_DIR, { recursive: true })
+/** Stored files are named <id>.<detected type>, so the type never comes from the client. */
+const findUpload = (id: string, types: readonly string[]) => store.find(id, types)
+
+/** Saves the bytes and records who owns the file and when it expires. */
+async function storeUpload(q: Queryable, bytes: Buffer, type: string, kind: files.FileKind, ownerPhone: string): Promise<string> {
   const id = randomToken(16).toLowerCase()
-  fs.writeFileSync(path.join(UPLOAD_DIR, `${id}.${type}`), bytes, { mode: 0o600 })
+  await store.put(id, type, bytes)
+  await files.registerFile(q, { id, kind, type, size: bytes.length, ownerPhone })
   return id
 }
 
@@ -213,6 +214,7 @@ async function newOrderId(q: Queryable): Promise<string> {
 /** Moves an order to a new state and runs that state's side effects. The caller has already validated it. */
 async function applyTransition(q: Queryable, order: OrderDoc, next: OrderStateEnum, note: string): Promise<void> {
   order.status = next
+  if (next === 'Closed' || next === 'Cancelled') await files.startRetention(q, order.id)
   // Check-ins only matter while the scribe is writing. After that, a late timer must not cost them a strike.
   if (next !== 'Writing') await sched.closeRushWatch(q, order.id)
 
@@ -272,7 +274,8 @@ export async function runScheduledJobs(db: Db, now: Date) {
         await applyTransition(q, order, 'Reassigned', 'Missed hourly check-in. Returned to the pool; restart from page 1.')
       }
     }
-    return { escrowReleased, rushResults }
+    const filesDeleted = await files.sweepFiles(q, store, now)
+    return { escrowReleased, rushResults, filesDeleted }
   })
 }
 
@@ -548,6 +551,8 @@ export function createApp(db: Db) {
     const title = optStr(b.title, 'title', 120) ?? 'Manuscript Order'
     const subject = optStr(b.subject, 'subject', 60) ?? 'General'
     const penStyle = optStr(b.penStyle, 'penStyle', 40) ?? 'Ballpoint · Blue'
+    const notesFileId = optStr(b.notesFileId, 'notesFileId', 40)
+    if (notesFileId) idLike(notesFileId, 'notesFileId')
     const preferred = optStr(b.preferredScribeId, 'preferredScribeId', 40)
     if (preferred) {
       idLike(preferred, 'preferredScribeId')
@@ -569,11 +574,15 @@ export function createApp(db: Db) {
       addons: addonLabels(extras, q.pages),
       penStyle,
       preferredScribeId: preferred,
+      notesFileId,
       createdAt: new Date().toISOString(),
       finalDeadline: computeDeadlines(q.pages).formattedFinalDeadline,
       timeline: [{ status: 'Draft', timestamp: new Date().toISOString(), note: 'Order created. Waiting for payment.' }],
     }
-    await insertOrder(db, order)
+    await db.tx(async (q) => {
+      await insertOrder(q, order)
+      if (notesFileId && !(await files.attachFile(q, notesFileId, order.id, s.phone))) throw new ValidationError('That notes file is not yours or no longer exists')
+    })
     return res.status(201).json({ success: true, order: publicOrder(order, s) })
   })
 
@@ -708,13 +717,45 @@ export function createApp(db: Db) {
     sensitiveLimit,
     requireAuth('customer', 'admin'),
     express.raw({ type: 'application/octet-stream', limit: '100mb' }),
-    (req, res) => {
+    async (req, res) => {
       const bytes = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0)
       const verdict = validateUpload({ name: uploadName(req), size: bytes.length }, bytes, 'video')
       if (!verdict.ok) return res.status(400).json({ error: verdict.error })
-      return res.status(201).json({ success: true, url: `/api/media/${storeUpload(bytes, 'mp4')}` })
+      const id = await storeUpload(db, bytes, 'mp4', 'evidence', sessionOf(res).phone)
+      return res.status(201).json({ success: true, url: `/api/media/${id}` })
     },
   )
+
+  // The customer's notes. They are read back only by the owner, the assigned scribe and admins.
+  app.post(
+    '/api/uploads/notes',
+    sensitiveLimit,
+    requireAuth('customer'),
+    express.raw({ type: 'application/octet-stream', limit: '20mb' }),
+    async (req, res) => {
+      const bytes = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0)
+      const verdict = validateUpload({ name: uploadName(req), size: bytes.length }, bytes, 'document')
+      if (!verdict.ok) return res.status(400).json({ error: verdict.error })
+      const id = await storeUpload(db, bytes, verdict.type, 'notes', sessionOf(res).phone)
+      return res.status(201).json({ success: true, fileId: id })
+    },
+  )
+
+  app.get('/api/orders/:id/notes', requireAuth(), async (req, res) => {
+    const s = sessionOf(res)
+    const order = await loadVisible(db, idLike(req.params.id, 'order id'), s)
+    const isOwner = ownsOrder(order, s)
+    const isWorking = s.role === 'scribe' && order.scribeId === scribeIdFor(s.phone) && ['Accepted', 'Writing', 'Dispatched', 'Delivered', 'Disputed'].includes(order.status)
+    if (!(s.role === 'admin' || isOwner || isWorking)) throw forbid()
+    const info = order.notesFileId ? await files.fileInfo(db, order.notesFileId) : undefined
+    const found = info ? findUpload(info.id, [info.type]) : undefined
+    if (!info || !found) return res.status(404).json({ error: 'No notes file for this order' })
+    const mime: Record<string, string> = { pdf: 'application/pdf', png: 'image/png', jpeg: 'image/jpeg', webp: 'image/webp', text: 'text/plain; charset=utf-8' }
+    res.setHeader('Content-Type', mime[info.type] ?? 'application/octet-stream')
+    res.setHeader('Content-Disposition', `attachment; filename="notes-${order.id}.${info.type === 'text' ? 'txt' : info.type}"`)
+    res.setHeader('Cache-Control', 'private, no-store')
+    return fs.createReadStream(found.file).pipe(res)
+  })
 
   // Handwriting sample photos are shown to customers, so they are served without sign-in.
   app.post(
@@ -722,11 +763,12 @@ export function createApp(db: Db) {
     sensitiveLimit,
     requireAuth('scribe'),
     express.raw({ type: 'application/octet-stream', limit: '9mb' }),
-    (req, res) => {
+    async (req, res) => {
       const bytes = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0)
       const verdict = validateUpload({ name: uploadName(req), size: bytes.length }, bytes, 'image')
       if (!verdict.ok) return res.status(400).json({ error: verdict.error })
-      return res.status(201).json({ success: true, url: `/api/samples/${storeUpload(bytes, verdict.type)}` })
+      const id = await storeUpload(db, bytes, verdict.type, 'sample', sessionOf(res).phone)
+      return res.status(201).json({ success: true, url: `/api/samples/${id}` })
     },
   )
 
@@ -758,12 +800,13 @@ export function createApp(db: Db) {
     const now = given === undefined ? new Date() : new Date(str(given, 'simulatedTimestamp', { max: 40 }))
     if (Number.isNaN(now.getTime())) throw new ValidationError('simulatedTimestamp is not a valid date')
 
-    const { escrowReleased, rushResults } = await runScheduledJobs(db, now)
+    const { escrowReleased, rushResults, filesDeleted } = await runScheduledJobs(db, now)
     return res.json({
       success: true,
       simulatedTime: now.toISOString(),
       escrowReleased,
       rushResults,
+      filesDeleted,
       auditLogs: await sched.getAuditLogs(db, 10),
     })
   })
@@ -844,6 +887,7 @@ export function createApp(db: Db) {
       if (open.length) throw new HttpError(409, 'A dispute is already open for this order')
 
       // Scribe and amount come from the order, never from the client.
+      if (MEDIA_PATH.test(video)) await files.attachFile(q, video.slice('/api/media/'.length), orderId, s.role === 'admin' ? null : s.phone)
       const d = await logi.fileDispute(q, orderId, reason, video, notes, name, order.scribeId, order.customerTotal, order.scribeName)
       await sched.freezeEscrow(q, orderId)
       await applyTransition(q, order, 'Disputed', `Dispute ${d.id} opened. Escrow frozen.`)

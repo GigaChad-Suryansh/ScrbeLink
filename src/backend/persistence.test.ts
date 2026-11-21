@@ -1,3 +1,4 @@
+import { MIGRATIONS } from './migrations'
 import './testSetup'
 import { after, describe, test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -27,7 +28,7 @@ describe('data survives a restart', () => {
     const scribe = await l.getScribe(second, 'S-KEEP01')
     assert.equal(scribe?.name, 'Kept')
     assert.equal(scribe?.strikes, 2)
-    assert.equal((await second.query('SELECT count(*)::int AS n FROM schema_migrations'))[0].n, 1, 'migrations are not applied twice')
+    assert.equal((await second.query('SELECT count(*)::int AS n FROM schema_migrations'))[0].n, MIGRATIONS.length, 'migrations are not applied twice')
     await second.close()
   })
 })

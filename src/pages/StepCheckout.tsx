@@ -12,6 +12,7 @@ import Icon from '../components/Icons'
 import { useOrder } from '../lib/orderStore'
 import { quote, inr, formatDuration } from '../lib/pricing'
 import type { UpiPaymentIntent } from '../backend/paymentGateway'
+import { getPendingNotes } from '../lib/pendingFile'
 import { api } from '../lib/api'
 
 export default function StepCheckout() {
@@ -49,6 +50,13 @@ export default function StepCheckout() {
     setUpiError('')
     setPaying(true)
     try {
+      // 0. Send the notes so the scribe can read them once they accept the order.
+      const notes = getPendingNotes()
+      let notesFileId: string | undefined
+      if (notes) {
+        const up = await api<{ fileId: string }>('POST', '/api/uploads/notes', { as: 'customer', raw: notes, headers: { 'x-file-name': encodeURIComponent(notes.name) } })
+        notesFileId = up.fileId
+      }
       // 1. The server creates the order and prices it itself.
       const created = await api<{ order: { id: string } }>('POST', '/api/orders/create', {
         as: 'customer',
@@ -62,6 +70,7 @@ export default function StepCheckout() {
           customTemplate: state.customTemplate,
           penStyle: `${penLabels[state.pen]} · ${state.ink === 'blue' ? 'Blue' : 'Black'}`,
           preferredScribeId: state.scribeId ?? undefined,
+          notesFileId,
         },
       })
       const orderId = created.order.id

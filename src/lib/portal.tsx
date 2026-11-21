@@ -30,6 +30,7 @@ interface ApiOrder {
   addons: string[]
   penStyle: string
   deliveryOtp?: string
+  notesFileId?: string
   createdAt: string
   intakeDeadline?: string
   nextCheckInDue?: string
@@ -73,6 +74,7 @@ function toTrackable(o: ApiOrder): TrackableOrder {
     nextCheckInDueAt: o.status === 'Writing' ? remaining(o.nextCheckInDue) : undefined,
     timeline: o.timeline.map((t) => ({ status: t.status as OrderStatus, timestamp: when(t.timestamp), note: t.note })),
     otp: o.deliveryOtp,
+    hasNotes: Boolean(o.notesFileId),
   }
 }
 

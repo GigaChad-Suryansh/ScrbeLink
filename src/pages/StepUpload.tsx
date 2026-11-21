@@ -14,6 +14,7 @@ import { MIN_ORDER_MESSAGE, meetsMinimum } from '../lib/pricing'
 import { detectCoverPage } from '../lib/coverPage'
 import { checkFile } from '../lib/checkUpload'
 import { extractText } from '../lib/extractText'
+import { setPendingNotes } from '../lib/pendingFile'
 import type { UploadedDoc } from '../lib/orderStore'
 
 const ACCEPTED = '.txt,.pdf,.jpg,.jpeg,.png,.webp'
@@ -58,6 +59,7 @@ export default function StepUpload() {
       }
       setFile(f)
       setDoc(d)
+      setPendingNotes(f)
     } catch {
       setError('Could not read the file. Try a different format.')
     } finally {

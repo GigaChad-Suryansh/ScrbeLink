@@ -128,4 +128,22 @@ export const MIGRATIONS: Migration[] = [
       )`,
     ],
   },
+  {
+    version: 2,
+    sql: [
+      `CREATE TABLE files (
+        id           text PRIMARY KEY,
+        kind         text NOT NULL,
+        type         text NOT NULL,
+        size         bigint NOT NULL,
+        owner_phone  text NOT NULL,
+        order_id     text,
+        created_at   timestamptz NOT NULL DEFAULT now(),
+        delete_after timestamptz
+      )`,
+      `CREATE INDEX files_order_idx ON files (order_id)`,
+      `CREATE INDEX files_delete_idx ON files (delete_after) WHERE delete_after IS NOT NULL`,
+      `ALTER TABLE orders ADD COLUMN notes_file_id text`,
+    ],
+  },
 ]

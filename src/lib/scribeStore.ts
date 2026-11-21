@@ -28,6 +28,7 @@ export interface TrackableOrder {
   words: number
   addons: string[]
   penStyle: string
+  hasNotes?: boolean
   customerPaid: number
   scribePayout: number
   createdAt: string
