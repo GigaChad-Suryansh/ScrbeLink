@@ -60,7 +60,8 @@ Things a real launch needs that are not on any list yet:
 - Account page per role: name, phone, email (optional), order history.
 - **Done when:** a new person can sign up on a phone with a real SMS code and see their empty account page. Tests cover lockout and expiry.
 
-### Phase 10: Real notes upload
+### Phase 10: Real notes upload (mostly done)
+- Done: pdf.js reads text PDFs; scanned pages and photos go through OCR (Tesseract.js, loaded only when needed); the count is marked "estimated" when OCR was used. Not yet done: server-side recount, private file storage, 7-day deletion, page preview with cover-page highlight, and OCR language data hosted by us (Tesseract downloads it from a CDN on first use).
 - Extract text with pdf.js for text PDFs; OCR (Tesseract.js or a server call) for images and scanned PDFs.
 - Page and word count from real content. Show a preview of detected pages with the cover-page warning on the exact page.
 - Server-side re-check of the count before charging (never trust the browser).

@@ -16,6 +16,10 @@ export interface UploadedDoc {
   sizeBytes: number
   wordCount: number
   hasCoverPageWarning: boolean
+  /** Pages in the PDF, when the file is a PDF or photo. */
+  pdfPages?: number
+  /** True when the words were counted from OCR, so the number is approximate. */
+  estimated?: boolean
 }
 
 export interface OrderState {

@@ -13,28 +13,11 @@ import { sanitizeText, wordCount } from '../lib/sanitize'
 import { MIN_ORDER_MESSAGE, meetsMinimum } from '../lib/pricing'
 import { detectCoverPage } from '../lib/coverPage'
 import { checkFile } from '../lib/checkUpload'
+import { extractText } from '../lib/extractText'
 import type { UploadedDoc } from '../lib/orderStore'
 
 const ACCEPTED = '.txt,.pdf,.jpg,.jpeg,.png,.webp'
 const MAX_BYTES = 20 * 1024 * 1024  // 20 MB
-
-/** Read a text / image file and return its plain-text representation. */
-async function extractText(file: File): Promise<string> {
-  if (file.type === 'text/plain') {
-    return file.text()
-  }
-  // For PDF / images we fall back to reading bytes as Latin-1 to catch any
-  // ASCII-compatible text embedded in the file (e.g. PDF streams).
-  // A real implementation would use pdf.js or OCR; for Phase 2 this is a stub.
-  const buf = await file.arrayBuffer()
-  const arr = new Uint8Array(buf)
-  let str = ''
-  for (let i = 0; i < Math.min(arr.length, 50000); i++) {
-    const c = arr[i]
-    if (c >= 32 || c === 10 || c === 13 || c === 9) str += String.fromCharCode(c)
-  }
-  return str
-}
 
 export default function StepUpload() {
   const { dispatch } = useOrder()
@@ -45,6 +28,7 @@ export default function StepUpload() {
   const [file, setFile] = useState<File | null>(null)
   const [doc, setDoc] = useState<UploadedDoc | null>(null)
   const [loading, setLoading] = useState(false)
+  const [progress, setProgress] = useState('')
   const [error, setError] = useState('')
 
   async function processFile(f: File) {
@@ -60,8 +44,8 @@ export default function StepUpload() {
         setError(verdict.error)
         return
       }
-      const raw = await extractText(f)
-      const clean = sanitizeText(raw)
+      const got = await extractText(f, setProgress)
+      const clean = sanitizeText(got.text)
       const wc = wordCount(clean)
       const cover = detectCoverPage(clean)
       const d: UploadedDoc = {
@@ -69,6 +53,8 @@ export default function StepUpload() {
         sizeBytes: f.size,
         wordCount: wc,
         hasCoverPageWarning: cover.warning,
+        pdfPages: got.pages ?? undefined,
+        estimated: got.usedOcr,
       }
       setFile(f)
       setDoc(d)
@@ -76,6 +62,7 @@ export default function StepUpload() {
       setError('Could not read the file. Try a different format.')
     } finally {
       setLoading(false)
+      setProgress('')
     }
   }
 
@@ -137,7 +124,7 @@ export default function StepUpload() {
         )}
         <p className="upload-zone__label">
           {loading
-            ? 'Reading file...'
+            ? (progress || 'Reading file...')
             : file
             ? file.name
             : 'Click to browse or drag a file here'}
@@ -181,7 +168,7 @@ export default function StepUpload() {
           </div>
           <div className="upload-summary__row">
             <span>Detected words</span>
-            <strong>{doc.wordCount.toLocaleString()}</strong>
+            <strong>{doc.wordCount.toLocaleString()}{doc.estimated ? ' (estimated)' : ''}</strong>
           </div>
           <div className="upload-summary__row">
             <span>Estimated pages</span>
