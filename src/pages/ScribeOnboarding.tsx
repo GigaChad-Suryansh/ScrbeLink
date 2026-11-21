@@ -13,6 +13,7 @@ import Icon from '../components/Icons'
 import { api } from '../lib/api'
 import { useScribePortal } from '../lib/scribeStore'
 import { checkFile, uploadHint } from '../lib/checkUpload'
+import PickupCard from '../components/PickupCard'
 
 const SUBJECT_OPTIONS = [
   'Engineering & Tech',
@@ -101,6 +102,8 @@ function OnboardingForm() {
           Complete your profile to receive nearby transcription assignments. Orders settle directly into your UPI address.
         </p>
       </div>
+
+      <PickupCard />
 
       <form onSubmit={handleSave} className="onboarding-form-grid">
         {/* Left Column: Form Details */}

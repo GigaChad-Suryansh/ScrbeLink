@@ -107,9 +107,10 @@ export default function OrderTracker() {
                 ● {order.status}
               </span>
               <span className="deadline-badge">
-                ⏱ Deadline: {order.deadlineAt}
+                Deadline: {order.deadlineAt}
               </span>
             </div>
+            {order.deliverTo && <p style={{ margin: '8px 0 0', fontSize: 14, color: 'var(--muted)' }}>Delivering to {order.deliverTo}</p>}
 
             <h3 style={{ marginTop: 12, fontSize: 20 }}>{order.title}</h3>
             <p style={{ color: 'var(--muted)', fontSize: 14, marginTop: 4 }}>

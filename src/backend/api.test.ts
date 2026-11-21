@@ -68,6 +68,8 @@ const VIDEO = 'https://storage.scribelink.in/unboxing/test.mp4'
 
 // ── Main suite: one server, five sign-ins (the OTP limit is 5 per 15 minutes) ─
 
+const GATE = { college: 'DTU', line: 'Main Gate 1', pincode: '110042', contactName: 'Riya', contactPhone: '+919876500001' }
+
 describe('API', () => {
   let ctx: Awaited<ReturnType<typeof startServer>>
   let api: ReturnType<typeof client>
@@ -190,7 +192,7 @@ describe('API', () => {
     let otp = ''
 
     test('a customer creates an order and sees their own delivery OTP', async () => {
-      const r = await api.call('POST', '/api/orders/create', { token: custA, body: { title: 'Physics', subject: 'Physics', words: 2000 } })
+      const r = await api.call('POST', '/api/orders/create', { token: custA, body: { title: 'Physics', subject: 'Physics', words: 2000, dropGate: GATE } })
       assert.equal(r.status, 201)
       orderId = r.body.order.id
       otp = r.body.order.deliveryOtp
@@ -208,14 +210,14 @@ describe('API', () => {
         assert.equal(r.status, 400, `${words} words`)
         assert.match(r.body.error, /10 pages/)
       }
-      assert.equal((await api.call('POST', '/api/orders/create', { token: custA, body: { words: 1801 } })).status, 201)
+      assert.equal((await api.call('POST', '/api/orders/create', { token: custA, body: { words: 1801, dropGate: GATE } })).status, 201)
     })
 
     test('order creation validates input', async () => {
       for (const body of [{}, { words: 0 }, { words: 'many' }, { words: 100, title: 'x'.repeat(200) }, { words: 100, customTemplate: 'yes' }]) {
         assert.equal((await api.call('POST', '/api/orders/create', { token: custA, body })).status, 400, JSON.stringify(body))
       }
-      assert.equal((await api.call('POST', '/api/orders/create', { token: scribe1, body: { words: 2000 } })).status, 403, 'scribes cannot place orders')
+      assert.equal((await api.call('POST', '/api/orders/create', { token: scribe1, body: { words: 2000, dropGate: GATE } })).status, 403, 'scribes cannot place orders')
     })
 
     test('another customer cannot see the order', async () => {
@@ -329,7 +331,7 @@ describe('API', () => {
 
   describe('an undisputed delivery', () => {
     test('pays the scribe after 24 hours', async () => {
-      const created = await api.call('POST', '/api/orders/create', { token: admin, body: { words: 2000 } })
+      const created = await api.call('POST', '/api/orders/create', { token: admin, body: { words: 2000, dropGate: GATE } })
       const id = created.body.order.id
       await api.pay(admin, id)
       const step = (nextStatus: string, extra = {}) => api.call('POST', `/api/orders/${id}/transition`, { token: admin, body: { nextStatus, ...extra } })
@@ -347,7 +349,7 @@ describe('API', () => {
 
   describe('rush protocol', () => {
     test('a missed check-in strikes the scribe and takes the order away', async () => {
-      const id = (await api.call('POST', '/api/orders/create', { token: admin, body: { words: 2000 } })).body.order.id
+      const id = (await api.call('POST', '/api/orders/create', { token: admin, body: { words: 2000, dropGate: GATE } })).body.order.id
       await api.pay(admin, id)
       const step = (nextStatus: string, extra = {}) => api.call('POST', `/api/orders/${id}/transition`, { token: admin, body: { nextStatus, ...extra } })
       await step('Accepted', { scribeId: 'S-GHOST1' })
@@ -373,7 +375,7 @@ describe('API', () => {
   describe('payments (test mode)', () => {
     let orderId = ''
     test('the server decides the price', async () => {
-      orderId = (await api.call('POST', '/api/orders/create', { token: custA, body: { words: 2000 } })).body.order.id
+      orderId = (await api.call('POST', '/api/orders/create', { token: custA, body: { words: 2000, dropGate: GATE } })).body.order.id
       const cheap = await api.call('POST', '/api/payment/upi/initiate', { token: custA, body: { orderId, amount: 1 } })
       assert.equal(cheap.status, 400)
       for (const amount of ['300', -300, 0, 1e12, null]) {
@@ -467,7 +469,7 @@ describe('abuse protection', () => {
     try {
       const api = client(base)
       const admin = await api.login(ADMIN, 'admin')
-      const id = (await api.call('POST', '/api/orders/create', { token: admin, body: { words: 2000 } })).body.order.id
+      const id = (await api.call('POST', '/api/orders/create', { token: admin, body: { words: 2000, dropGate: GATE } })).body.order.id
       const step = (nextStatus: string, extra = {}) => api.call('POST', `/api/orders/${id}/transition`, { token: admin, body: { nextStatus, ...extra } })
       await step('Accepted', { scribeId: 'S-TESTBB' })
       await step('Writing')

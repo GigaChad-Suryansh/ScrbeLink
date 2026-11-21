@@ -11,6 +11,8 @@ import { testDb } from './testDb'
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64')
 const MP4 = Buffer.concat([Buffer.from([0, 0, 0, 24]), Buffer.from('ftypmp42'), Buffer.alloc(64)])
 
+const GATE = { college: 'DTU', line: 'Main Gate 1', pincode: '110042', contactName: 'Riya', contactPhone: '+919876500001' }
+
 describe('web app wiring', () => {
   let server: Server
   let base = ''
@@ -84,7 +86,7 @@ describe('web app wiring', () => {
   })
 
   test('an unapproved scribe sees no pool and cannot accept', async () => {
-    const id = (await call('POST', '/api/orders/create', { token: cust, body: { words: 2000 } })).body.order.id
+    const id = (await call('POST', '/api/orders/create', { token: cust, body: { words: 2000, dropGate: GATE } })).body.order.id
     assert.equal((await call('GET', `/api/orders/${id}`, { token: cust })).body.order.status, 'Draft')
     await pay(cust, id)
     assert.equal((await call('GET', '/api/orders', { token: scribe })).body.orders.length, 0)
@@ -102,7 +104,7 @@ describe('web app wiring', () => {
 
   test('orders list is private per customer and newest first', async () => {
     assert.equal((await call('GET', '/api/orders', { token: other })).body.orders.length, 0)
-    const second = (await call('POST', '/api/orders/create', { token: cust, body: { words: 2000 } })).body.order.id
+    const second = (await call('POST', '/api/orders/create', { token: cust, body: { words: 2000, dropGate: GATE } })).body.order.id
     const mine = (await call('GET', '/api/orders', { token: cust })).body.orders
     assert.equal(mine.length, 2)
     assert.equal(mine[0].id, second)
@@ -114,16 +116,16 @@ describe('web app wiring', () => {
     await call('PUT', '/api/scribe/me', { token: other2, body: profile })
     const myId = (await call('GET', '/api/scribe/me', { token: other2 })).body.profile.id
     await call('POST', `/api/admin/scribes/${myId}/verify`, { token: admin, body: { isApproved: true } })
-    const id = (await call('POST', '/api/orders/create', { token: cust, body: { words: 2000, preferredScribeId: scribeId } })).body.order.id
+    const id = (await call('POST', '/api/orders/create', { token: cust, body: { words: 2000, dropGate: GATE, preferredScribeId: scribeId } })).body.order.id
     await pay(cust, id)
     assert.ok((await call('GET', '/api/orders', { token: scribe })).body.orders.some((o: any) => o.id === id))
     assert.ok(!(await call('GET', '/api/orders', { token: other2 })).body.orders.some((o: any) => o.id === id))
     assert.equal((await call('POST', `/api/orders/${id}/transition`, { token: other2, body: { nextStatus: 'Accepted' } })).status, 403)
-    assert.equal((await call('POST', '/api/orders/create', { token: cust, body: { words: 2000, preferredScribeId: 'S-NOBODY' } })).status, 400)
+    assert.equal((await call('POST', '/api/orders/create', { token: cust, body: { words: 2000, dropGate: GATE, preferredScribeId: 'S-NOBODY' } })).status, 400)
   })
 
   test('a full job: wallet stays empty until escrow releases, then can be withdrawn once', async () => {
-    const id = (await call('POST', '/api/orders/create', { token: cust, body: { words: 2000 } })).body.order.id
+    const id = (await call('POST', '/api/orders/create', { token: cust, body: { words: 2000, dropGate: GATE } })).body.order.id
     await pay(cust, id)
     const step = (nextStatus: string) => call('POST', `/api/orders/${id}/transition`, { token: scribe, body: { nextStatus } })
     assert.equal((await step('Accepted')).status, 200)
@@ -166,7 +168,7 @@ describe('web app wiring', () => {
   })
 
   test('a dispute accepts an uploaded video but not a made-up one', async () => {
-    const id = (await call('POST', '/api/orders/create', { token: cust, body: { words: 2000 } })).body.order.id
+    const id = (await call('POST', '/api/orders/create', { token: cust, body: { words: 2000, dropGate: GATE } })).body.order.id
     await pay(cust, id)
     const step = (t: string, nextStatus: string) => call('POST', `/api/orders/${id}/transition`, { token: t, body: { nextStatus } })
     await step(scribe, 'Accepted'); await step(scribe, 'Writing'); await step(scribe, 'Dispatched'); await step(admin, 'Delivered')
@@ -185,7 +187,7 @@ describe('web app wiring', () => {
   })
 
   test('two withdrawals at the same moment pay out once', async () => {
-    const id = (await call('POST', '/api/orders/create', { token: cust, body: { words: 2000 } })).body.order.id
+    const id = (await call('POST', '/api/orders/create', { token: cust, body: { words: 2000, dropGate: GATE } })).body.order.id
     await pay(cust, id)
     const step = (nextStatus: string) => call('POST', `/api/orders/${id}/transition`, { token: scribe, body: { nextStatus } })
     await step('Accepted'); await step('Writing')
@@ -206,7 +208,7 @@ describe('web app wiring', () => {
 
   test('two scribes accepting the same order at once: one wins', async () => {
     const other2 = scribeB // signed up and approved in an earlier test
-    const id = (await call('POST', '/api/orders/create', { token: cust, body: { words: 2000 } })).body.order.id
+    const id = (await call('POST', '/api/orders/create', { token: cust, body: { words: 2000, dropGate: GATE } })).body.order.id
     await pay(cust, id)
     const accept = (t: string) => call('POST', `/api/orders/${id}/transition`, { token: t, body: { nextStatus: 'Accepted' } })
     const rs = await Promise.all([accept(scribe), accept(other2)])
@@ -216,7 +218,7 @@ describe('web app wiring', () => {
   })
 
   test('paying twice does not charge or move the order twice', async () => {
-    const id = (await call('POST', '/api/orders/create', { token: cust, body: { words: 2000 } })).body.order.id
+    const id = (await call('POST', '/api/orders/create', { token: cust, body: { words: 2000, dropGate: GATE } })).body.order.id
     const order = (await call('GET', `/api/orders/${id}`, { token: cust })).body.order
     const init = await call('POST', '/api/payment/upi/initiate', { token: cust, body: { orderId: id, amount: order.customerTotal } })
     const verify = () => call('POST', '/api/payment/upi/verify', { token: cust, body: { paymentId: init.body.payment.paymentId } })
@@ -228,7 +230,7 @@ describe('web app wiring', () => {
   })
 
   test('two disputes at once: one is filed, the other is refused', async () => {
-    const id = (await call('POST', '/api/orders/create', { token: cust, body: { words: 2000 } })).body.order.id
+    const id = (await call('POST', '/api/orders/create', { token: cust, body: { words: 2000, dropGate: GATE } })).body.order.id
     await pay(cust, id)
     const step = (t: string, nextStatus: string) => call('POST', `/api/orders/${id}/transition`, { token: t, body: { nextStatus } })
     await step(scribe, 'Accepted'); await step(scribe, 'Writing'); await step(scribe, 'Dispatched'); await step(admin, 'Delivered')
@@ -247,8 +249,8 @@ describe('web app wiring', () => {
     assert.equal(up.status, 201)
 
     // Someone else's file cannot be attached; your own can.
-    assert.equal((await call('POST', '/api/orders/create', { token: other, body: { words: 2000, notesFileId: up.body.fileId } })).status, 400)
-    const id = (await call('POST', '/api/orders/create', { token: cust, body: { words: 2000, notesFileId: up.body.fileId } })).body.order.id
+    assert.equal((await call('POST', '/api/orders/create', { token: other, body: { words: 2000, dropGate: GATE, notesFileId: up.body.fileId } })).status, 400)
+    const id = (await call('POST', '/api/orders/create', { token: cust, body: { words: 2000, dropGate: GATE, notesFileId: up.body.fileId } })).body.order.id
     assert.equal((await call('GET', `/api/orders/${id}/notes`, { token: cust })).status, 200)
     assert.equal((await call('GET', `/api/orders/${id}/notes`, { token: other })).status, 404, 'other customers cannot even see the order')
     assert.equal((await call('GET', `/api/orders/${id}/notes`, { token: scribe })).status, 403, 'the scribe cannot read it before accepting')
@@ -275,7 +277,59 @@ describe('web app wiring', () => {
     assert.equal(up.status, 201)
     const swept = await call('POST', '/api/cron/trigger-jobs', { token: admin, body: { simulatedTimestamp: new Date(Date.now() + 2 * 86_400_000).toISOString() } })
     assert.ok(swept.body.filesDeleted >= 1)
-    assert.equal((await call('POST', '/api/orders/create', { token: cust, body: { words: 2000, notesFileId: up.body.fileId } })).status, 400)
+    assert.equal((await call('POST', '/api/orders/create', { token: cust, body: { words: 2000, dropGate: GATE, notesFileId: up.body.fileId } })).status, 400)
+  })
+
+  test('saved gates: owned by one customer, capped at five, and used as a copy on the order', async () => {
+    const place = { label: 'Hostel gate', college: 'DTU', line: 'Gate 2', landmark: 'Near the tea stall', pincode: '110042', contactName: 'Riya', contactPhone: '+919876500001' }
+    for (const bad of [{ ...place, pincode: '12' }, { ...place, contactPhone: '12345' }, { ...place, college: '' }, {}]) {
+      assert.equal((await call('POST', '/api/addresses', { token: cust, body: bad })).status, 400)
+    }
+    const saved = await call('POST', '/api/addresses', { token: cust, body: place })
+    assert.equal(saved.status, 201)
+    const gateId = saved.body.address.id
+    assert.equal((await call('GET', '/api/addresses', { token: other })).body.addresses.length, 0, 'private to the owner')
+    assert.equal((await call('DELETE', `/api/addresses/${gateId}`, { token: other })).status, 404)
+
+    // An order must say where it goes, and can only use the customer's own saved gate.
+    assert.equal((await call('POST', '/api/orders/create', { token: cust, body: { words: 2000 } })).status, 400, 'no gate')
+    assert.equal((await call('POST', '/api/orders/create', { token: other, body: { words: 2000, gateId } })).status, 400, "someone else's gate")
+    const made = await call('POST', '/api/orders/create', { token: cust, body: { words: 2000, gateId } })
+    assert.equal(made.status, 201)
+    assert.equal(made.body.order.dropGate.line, 'Gate 2')
+
+    // The order keeps its own copy: deleting the saved gate does not change it.
+    assert.equal((await call('DELETE', `/api/addresses/${gateId}`, { token: cust })).status, 200)
+    assert.equal((await call('GET', `/api/orders/${made.body.order.id}`, { token: cust })).body.order.dropGate.line, 'Gate 2')
+
+    for (let n = 0; n < 5; n++) assert.equal((await call('POST', '/api/addresses', { token: cust, body: place })).status, 201)
+    assert.equal((await call('POST', '/api/addresses', { token: cust, body: place })).status, 400, 'six is too many')
+  })
+
+  test('the scribe sees where the pages go but not who the customer is; pickup address is replaced, not added', async () => {
+    const id = (await call('POST', '/api/orders/create', { token: other, body: { words: 2000, dropGate: { college: 'NSUT', line: 'Gate 3', pincode: '110078', contactName: 'Secret Name', contactPhone: '+919876511111' } } })).body.order.id
+    await pay(other, id)
+    const seen = (await call('GET', `/api/orders/${id}`, { token: scribe })).body.order
+    assert.equal(seen.dropGate.line, 'Gate 3')
+    assert.equal(seen.dropGate.contactName, undefined)
+    assert.equal(seen.dropGate.contactPhone, undefined)
+    assert.equal((await call('GET', `/api/orders/${id}`, { token: other })).body.order.dropGate.contactName, 'Secret Name')
+
+    const home = { college: 'DTU', line: 'Hostel Block 4', pincode: '110042', contactName: 'Asha', contactPhone: '+919876500030' }
+    assert.equal((await call('POST', '/api/addresses', { token: scribe, body: home })).status, 201)
+    assert.equal((await call('POST', '/api/addresses', { token: scribe, body: { ...home, line: 'Hostel Block 5' } })).status, 201)
+    const mine = (await call('GET', '/api/addresses', { token: scribe })).body.addresses
+    assert.equal(mine.length, 1)
+    assert.equal(mine[0].line, 'Hostel Block 5')
+    assert.equal(mine[0].kind, 'pickup')
+
+    // Dispatch uses both saved places when nothing is typed in.
+    const step = (nextStatus: string) => call('POST', `/api/orders/${id}/transition`, { token: scribe, body: { nextStatus } })
+    await step('Accepted'); await step('Writing')
+    const d = await call('POST', '/api/logistics/dispatch', { token: scribe, body: { orderId: id } })
+    assert.equal(d.status, 200)
+    assert.match(d.body.task.pickupAddress, /Hostel Block 5/)
+    assert.match(d.body.task.dropGate, /Gate 3.*NSUT/)
   })
 
   test('health reports the database', async () => {

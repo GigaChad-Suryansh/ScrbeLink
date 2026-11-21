@@ -31,6 +31,7 @@ interface ApiOrder {
   penStyle: string
   deliveryOtp?: string
   notesFileId?: string
+  dropGate?: { college: string; line: string; landmark?: string; pincode: string; contactName?: string }
   createdAt: string
   intakeDeadline?: string
   nextCheckInDue?: string
@@ -75,6 +76,7 @@ function toTrackable(o: ApiOrder): TrackableOrder {
     timeline: o.timeline.map((t) => ({ status: t.status as OrderStatus, timestamp: when(t.timestamp), note: t.note })),
     otp: o.deliveryOtp,
     hasNotes: Boolean(o.notesFileId),
+    deliverTo: o.dropGate ? [o.dropGate.line, o.dropGate.college].join(', ') : undefined,
   }
 }
 

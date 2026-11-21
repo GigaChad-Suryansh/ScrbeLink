@@ -75,7 +75,7 @@ export default function ScribeDashboard() {
               <span className="setup-mark">{profile.registered ? <Icon name="check" size={18} /> : 1}</span>
               <div>
                 <strong>Set up your profile</strong>
-                <p>Add your name, college, UPI ID and a handwriting sample.</p>
+                <p>Add your name, college, UPI ID, pickup address and a handwriting sample.</p>
                 {!profile.registered && <Link to="/scribe/onboarding" className="btn btn-primary sm">Set up profile</Link>}
               </div>
             </li>
@@ -141,6 +141,7 @@ export default function ScribeDashboard() {
                       <p className="order-sub-meta">
                         Order #{order.id} · {order.subject} · {order.pages} pages ({order.words} words)
                       </p>
+                      {order.deliverTo && <p className="order-sub-meta">Deliver to: {order.deliverTo}</p>}
                     </div>
                     <div className="payout-badge">
                       <span className="payout-title">Your Cut</span>
@@ -314,6 +315,7 @@ export default function ScribeDashboard() {
                     <div><strong>Pages:</strong> {order.pages} (~{order.words} words)</div>
                     <div><strong>Pen:</strong> {order.penStyle}</div>
                     <div><strong>Deadline:</strong> {order.deadlineAt}</div>
+                    {order.deliverTo && <div><strong>Deliver to:</strong> {order.deliverTo}</div>}
                     <div><strong>Add-ons:</strong> {order.addons.join(', ') || 'Standard text'}</div>
                   </div>
 

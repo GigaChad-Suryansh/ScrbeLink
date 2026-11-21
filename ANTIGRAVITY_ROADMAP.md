@@ -68,7 +68,9 @@ Things a real launch needs that are not on any list yet:
 - Store the file privately; delete it 7 days after the order closes.
 - **Done when:** uploading a 10-page PDF and a phone photo of notes both give a sensible price.
 
-### Phase 11: Gate and address book
+### Phase 11: Gate and address book (mostly done)
+- Done: customers save up to 5 delivery gates (college, gate, landmark, PIN, who to hand over to) and must pick one at checkout; the order keeps a copy. Scribes save one pickup address. Dispatch uses both. Scribes see where pages go, never the customer's name or number.
+- Not yet done: map pin (latitude and longitude), distance-based price and time estimate, requiring a pickup address before a scribe can take orders (Phase 13 will need it).
 - Customer: saved campus gates (college, gate name, landmark, contact name and number, map pin).
 - Scribe: pickup address and the area they cover.
 - Price and time estimate depend on distance between the two (Porter fare plus margin). Update the pricing rules and the calculator to match.

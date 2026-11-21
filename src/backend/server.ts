@@ -30,6 +30,7 @@ import {
 } from '../shared/stateMachine'
 import { createDb, type Db, type Queryable } from './db'
 import { createUpiPaymentIntent, type UpiPaymentIntent } from './paymentGateway'
+import * as addr from './addresses'
 import * as files from './files'
 import * as sched from './scheduler'
 import * as logi from './logisticsService'
@@ -85,6 +86,8 @@ interface OrderDoc {
   deliveryOtp: string
   /** The customer's notes file, if uploaded. Only the owner, the assigned scribe and admins can read it. */
   notesFileId?: string
+  /** Where the finished pages are delivered. A copy taken when the order was placed. */
+  dropGate?: addr.Address
   addons: string[]
   penStyle: string
   /** If set, only this scribe sees the order in their pool. */
@@ -123,6 +126,7 @@ const orderFromRow = (r: any): OrderDoc => ({
   words: r.words,
   deliveryOtp: r.delivery_otp,
   notesFileId: r.notes_file_id ?? undefined,
+  dropGate: r.drop_gate ?? undefined,
   addons: r.addons,
   penStyle: r.pen_style,
   preferredScribeId: r.preferred_scribe_id ?? undefined,
@@ -142,10 +146,10 @@ async function fetchOrder(q: Queryable, id: string, lock = false): Promise<Order
 async function insertOrder(q: Queryable, o: OrderDoc): Promise<void> {
   await q.query(
     `INSERT INTO orders (id, customer_phone, title, subject, status, customer_total, scribe_payout, preferred_scribe_id,
-       pages, words, delivery_otp, addons, pen_style, final_deadline, timeline, created_at, notes_file_id)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13,$14,$15::jsonb,$16,$17)`,
+       pages, words, delivery_otp, addons, pen_style, final_deadline, timeline, created_at, notes_file_id, drop_gate)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13,$14,$15::jsonb,$16,$17,$18::jsonb)`,
     [o.id, o.customerPhone ?? null, o.title, o.subject, o.status, o.customerTotal, o.scribePayout, o.preferredScribeId ?? null,
-      o.pages, o.words, o.deliveryOtp, JSON.stringify(o.addons), o.penStyle, o.finalDeadline, JSON.stringify(o.timeline), o.createdAt, o.notesFileId ?? null],
+      o.pages, o.words, o.deliveryOtp, JSON.stringify(o.addons), o.penStyle, o.finalDeadline, JSON.stringify(o.timeline), o.createdAt, o.notesFileId ?? null, o.dropGate ? JSON.stringify(o.dropGate) : null],
   )
 }
 
@@ -193,8 +197,11 @@ const canView = (o: OrderDoc, s: Session) => s.role !== 'customer' || ownsOrder(
 
 /** Strips the delivery code unless the viewer is the owning customer or an admin. */
 function publicOrder(o: OrderDoc, s: Session): Omit<OrderDoc, 'customerPhone' | 'deliveryOtp'> & { deliveryOtp?: string } {
-  const { customerPhone: _owner, deliveryOtp, ...rest } = o
-  return s.role === 'admin' || ownsOrder(o, s) ? { ...rest, deliveryOtp } : rest
+  const { customerPhone: _owner, deliveryOtp, dropGate, ...rest } = o
+  if (s.role === 'admin' || ownsOrder(o, s)) return { ...rest, dropGate, deliveryOtp }
+  // The scribe learns only where the pages go, never who the customer is.
+  const place = dropGate && { label: dropGate.label, college: dropGate.college, line: dropGate.line, landmark: dropGate.landmark, pincode: dropGate.pincode }
+  return { ...rest, ...(place ? { dropGate: place as addr.Address } : {}) }
 }
 
 /** Loads an order the signed-in user may see, or throws 404. */
@@ -551,6 +558,8 @@ export function createApp(db: Db) {
     const title = optStr(b.title, 'title', 120) ?? 'Manuscript Order'
     const subject = optStr(b.subject, 'subject', 60) ?? 'General'
     const penStyle = optStr(b.penStyle, 'penStyle', 40) ?? 'Ballpoint · Blue'
+    const gateId = optStr(b.gateId, 'gateId', 40)
+    if (!gateId && b.dropGate === undefined) throw new ValidationError('Choose where to deliver the pages (a saved gate or a new one)')
     const notesFileId = optStr(b.notesFileId, 'notesFileId', 40)
     if (notesFileId) idLike(notesFileId, 'notesFileId')
     const preferred = optStr(b.preferredScribeId, 'preferredScribeId', 40)
@@ -580,6 +589,12 @@ export function createApp(db: Db) {
       timeline: [{ status: 'Draft', timestamp: new Date().toISOString(), note: 'Order created. Waiting for payment.' }],
     }
     await db.tx(async (q) => {
+      if (gateId) {
+        const saved = await addr.getAddress(q, gateId, s.phone)
+        if (!saved) throw new ValidationError('That gate is not in your saved places')
+        const { id: _i, kind: _k, ...copy } = saved
+        order.dropGate = copy
+      } else order.dropGate = addr.parseAddress(b.dropGate, 'dropGate')
       await insertOrder(q, order)
       if (notesFileId && !(await files.attachFile(q, notesFileId, order.id, s.phone))) throw new ValidationError('That notes file is not yours or no longer exists')
     })
@@ -705,6 +720,28 @@ export function createApp(db: Db) {
     res.json({ success: true, withdrawn: out, ...(await scribeView(db, s.phone)) })
   })
 
+  // ── 5b. Saved places ───────────────────────────────────────────────────────
+
+  const kindFor = (s: Session): addr.AddressKind => (s.role === 'scribe' ? 'pickup' : 'gate')
+
+  app.get('/api/addresses', requireAuth('customer', 'scribe'), async (_req, res) => {
+    const s = sessionOf(res)
+    res.json({ success: true, addresses: await addr.listAddresses(db, s.phone, kindFor(s)) })
+  })
+
+  app.post('/api/addresses', requireAuth('customer', 'scribe'), async (req, res) => {
+    const s = sessionOf(res)
+    const a = addr.parseAddress(bodyOf(req))
+    const saved = await db.tx((q) => addr.saveAddress(q, `ADDR-${randomToken(6).toUpperCase()}`, s.phone, kindFor(s), a))
+    res.status(201).json({ success: true, address: saved })
+  })
+
+  app.delete('/api/addresses/:id', requireAuth('customer', 'scribe'), async (req, res) => {
+    const ok = await addr.deleteAddress(db, idLike(req.params.id, 'address id'), sessionOf(res).phone)
+    if (!ok) throw notFound('Address not found')
+    res.json({ success: true })
+  })
+
   // ── 5c. Uploads (evidence videos, handwriting samples) ─────────────────────
 
   const uploadName = (req: Request) => {
@@ -826,7 +863,17 @@ export function createApp(db: Db) {
       if (!order) throw notFound('Order not found')
       if (s.role === 'scribe' && order.scribeId !== scribeIdFor(s.phone)) throw forbid('Only the assigned scribe can dispatch')
 
-      const task = await logi.createCourierDispatch(q, orderId, dropGate, pickup, partner, order.deliveryOtp, order.customerPhone)
+      const scribePhone = s.role === 'scribe' ? s.phone : order.scribeId ? (await logi.getScribe(q, order.scribeId))?.phone : undefined
+      const saved = scribePhone ? (await addr.listAddresses(q, scribePhone, 'pickup'))[0] : undefined
+      const task = await logi.createCourierDispatch(
+        q,
+        orderId,
+        dropGate ?? (order.dropGate ? addr.addressLine(order.dropGate) : undefined),
+        pickup ?? (saved ? addr.addressLine(saved) : undefined),
+        partner,
+        order.deliveryOtp,
+        order.customerPhone,
+      )
       if (order.status === 'Writing') await applyTransition(q, order, 'Dispatched', `Handed to ${task.courierPartner}. Tracking ${task.trackingId}.`)
       // The code goes to the customer only. Whoever dispatches must never see it.
       const { deliveryOtp: _otp, ...safeTask } = task

@@ -29,6 +29,8 @@ export interface TrackableOrder {
   addons: string[]
   penStyle: string
   hasNotes?: boolean
+  /** Where the pages are delivered: gate and college. No customer details. */
+  deliverTo?: string
   customerPaid: number
   scribePayout: number
   createdAt: string

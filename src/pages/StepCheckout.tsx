@@ -14,6 +14,7 @@ import { quote, inr, formatDuration } from '../lib/pricing'
 import type { UpiPaymentIntent } from '../backend/paymentGateway'
 import { getPendingNotes } from '../lib/pendingFile'
 import { api } from '../lib/api'
+import GatePicker from '../components/GatePicker'
 
 export default function StepCheckout() {
   const { state, dispatch } = useOrder()
@@ -23,6 +24,7 @@ export default function StepCheckout() {
   const [paymentIntent, setPaymentIntent] = useState<UpiPaymentIntent | null>(null)
   const [paying, setPaying] = useState(false)
   const [upiError, setUpiError] = useState('')
+  const [gateId, setGateId] = useState<string | null>(null)
 
   const q = quote({
     words: state.words,
@@ -43,6 +45,10 @@ export default function StepCheckout() {
   }
 
   async function onInitiatePayment() {
+    if (!gateId) {
+      setUpiError('Choose where to deliver your pages first.')
+      return
+    }
     if (!validateUpi(upi)) {
       setUpiError('Enter a valid UPI ID (e.g. name@okhdfcbank or name@paytm)')
       return
@@ -71,6 +77,7 @@ export default function StepCheckout() {
           penStyle: `${penLabels[state.pen]} · ${state.ink === 'blue' ? 'Blue' : 'Black'}`,
           preferredScribeId: state.scribeId ?? undefined,
           notesFileId,
+          gateId,
         },
       })
       const orderId = created.order.id
@@ -109,6 +116,8 @@ export default function StepCheckout() {
       <div className="checkout-grid">
         {/* ── Left: summary ── */}
         <div>
+          <GatePicker value={gateId} onChange={setGateId} />
+
           {/* Document */}
           <div className="summary-section card">
             <h3 className="summary-heading">Document</h3>
@@ -227,7 +236,7 @@ export default function StepCheckout() {
                 <button
                   className="btn btn-primary full"
                   onClick={onInitiatePayment}
-                  disabled={paying || !upi}
+                  disabled={paying || !upi || !gateId}
                   id="pay-btn"
                   style={{ fontSize: 16 }}
                 >

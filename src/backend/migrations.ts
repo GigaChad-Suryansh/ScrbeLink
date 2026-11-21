@@ -146,4 +146,18 @@ export const MIGRATIONS: Migration[] = [
       `ALTER TABLE orders ADD COLUMN notes_file_id text`,
     ],
   },
+  {
+    version: 3,
+    sql: [
+      `CREATE TABLE addresses (
+        id          text PRIMARY KEY,
+        owner_phone text NOT NULL,
+        kind        text NOT NULL,
+        data        jsonb NOT NULL,
+        created_at  timestamptz NOT NULL DEFAULT now()
+      )`,
+      `CREATE INDEX addresses_owner_idx ON addresses (owner_phone, kind)`,
+      `ALTER TABLE orders ADD COLUMN drop_gate jsonb`,
+    ],
+  },
 ]
