@@ -13,7 +13,7 @@ import type { AdminScribeApproval, DisputeRecord, NotificationLog } from '../sha
 import { api, fetchBlobUrl } from '../lib/api'
 import { inr } from '../lib/pricing'
 
-type Tab = 'cards' | 'disputes' | 'strikes' | 'notifications'
+type Tab = 'cards' | 'disputes' | 'strikes' | 'notifications' | 'refunds'
 
 /** Plays a protected evidence video: it is fetched with the admin's token, then shown from a blob URL. */
 function EvidenceVideo({ url }: { url: string }) {
@@ -38,6 +38,7 @@ export default function AdminPanel() {
   const [scribes, setScribes] = useState<AdminScribeApproval[]>([])
   const [disputes, setDisputes] = useState<DisputeRecord[]>([])
   const [notifications, setNotifications] = useState<NotificationLog[]>([])
+  const [refundList, setRefundList] = useState<Array<{ orderId: string; amount: number; reason: string; status: string; createdAt: string }>>([])
   const [activeTab, setActiveTab] = useState<Tab>('cards')
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
@@ -46,11 +47,13 @@ export default function AdminPanel() {
 
   const load = useCallback(async () => {
     try {
-      const [s, d, n] = await Promise.all([
+      const [s, d, n, r] = await Promise.all([
         api<{ scribes: AdminScribeApproval[] }>('GET', '/api/admin/scribes', { as: 'admin' }),
         api<{ disputes: DisputeRecord[] }>('GET', '/api/admin/disputes', { as: 'admin' }),
         api<{ notifications: NotificationLog[] }>('GET', '/api/admin/notifications', { as: 'admin' }),
+        api<{ refunds: typeof refundList }>('GET', '/api/admin/refunds', { as: 'admin' }),
       ])
+      setRefundList(r.refunds)
       setScribes(s.scribes)
       setDisputes(d.disputes)
       setNotifications(n.notifications)
@@ -143,6 +146,12 @@ export default function AdminPanel() {
           onClick={() => setActiveTab('strikes')}
         >
           Scribe strikes
+        </button>
+        <button
+          className={`admin-tab-btn ${activeTab === 'refunds' ? 'tab-btn--active' : ''}`}
+          onClick={() => setActiveTab('refunds')}
+        >
+          Refunds ({refundList.length})
         </button>
         <button
           className={`admin-tab-btn ${activeTab === 'notifications' ? 'tab-btn--active' : ''}`}
@@ -323,6 +332,30 @@ export default function AdminPanel() {
                 ))}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'refunds' && (
+        <div className="admin-card-section">
+          <h2>Refunds</h2>
+          <div className="card" style={{ marginTop: 16, padding: 20, overflowX: 'auto' }}>
+            {refundList.length === 0 ? <p style={{ color: 'var(--muted)' }}>No refunds yet.</p> : (
+              <table className="payout-table">
+                <thead><tr><th>Order</th><th>Amount</th><th>Reason</th><th>Status</th><th>Date</th></tr></thead>
+                <tbody>
+                  {refundList.map(r => (
+                    <tr key={r.orderId}>
+                      <td>{r.orderId}</td>
+                      <td>{inr(r.amount)}</td>
+                      <td>{r.reason.replace(/_/g, ' ').toLowerCase()}</td>
+                      <td>{r.status === 'PROCESSED' ? 'Sent' : 'Waiting for the gateway'}</td>
+                      <td>{new Date(r.createdAt).toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
           </div>
         </div>
       )}

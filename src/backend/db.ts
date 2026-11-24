@@ -81,6 +81,6 @@ async function migrate(db: Db): Promise<void> {
 /** Empties every data table. Used by tests so they can share one slow-to-start database. */
 export async function resetAll(db: Db): Promise<void> {
   await db.query(
-    'TRUNCATE addresses, files, orders, payments, scribes, scribe_strikes, escrow, rush_watches, courier_tasks, disputes, notifications, withdrawals, audit_log RESTART IDENTITY',
+    'TRUNCATE refunds, addresses, files, orders, payments, scribes, scribe_strikes, escrow, rush_watches, courier_tasks, disputes, notifications, withdrawals, audit_log RESTART IDENTITY',
   )
 }

@@ -160,4 +160,18 @@ export const MIGRATIONS: Migration[] = [
       `ALTER TABLE orders ADD COLUMN drop_gate jsonb`,
     ],
   },
+  {
+    version: 4,
+    sql: [
+      `CREATE TABLE refunds (
+        order_id   text PRIMARY KEY REFERENCES orders(id),
+        payment_id text NOT NULL,
+        amount     numeric(10,2) NOT NULL,
+        reason     text NOT NULL,
+        status     text NOT NULL,
+        gateway_refund_id text,
+        created_at timestamptz NOT NULL DEFAULT now()
+      )`,
+    ],
+  },
 ]

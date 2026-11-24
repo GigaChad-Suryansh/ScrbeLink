@@ -5,11 +5,13 @@
  */
 
 import Icon from '../components/Icons'
+import { CANCELLATION_POLICY, REFUND_REASON_TEXT, customerCanCancel, type RefundReason } from '../shared/refunds'
 import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { useScribePortal } from '../lib/scribeStore'
 import type { OrderStatus } from '../lib/scribeStore'
 import { inr } from '../lib/pricing'
+import { downloadFile } from '../lib/api'
 
 const STAGES: { key: OrderStatus; label: string; desc: string }[] = [
   { key: 'Paid', label: '1. Paid', desc: 'Held in Escrow' },
@@ -21,8 +23,10 @@ const STAGES: { key: OrderStatus; label: string; desc: string }[] = [
 
 export default function OrderTracker() {
   const { orderId } = useParams<{ orderId: string }>()
-  const { orders, loading, loadError } = useScribePortal()
+  const { orders, loading, loadError, cancelOrder } = useScribePortal()
   const [picked, setPicked] = useState<string | null>(null)
+  const [confirmCancel, setConfirmCancel] = useState(false)
+  const [cancelError, setCancelError] = useState('')
 
   const order = orders.find(o => o.id === (picked ?? orderId)) ?? (orderId ? undefined : orders[0])
 
@@ -95,6 +99,59 @@ export default function OrderTracker() {
           })}
         </div>
       </div>
+
+      {order.refund && (
+        <div className="card" style={{ padding: 20, marginBottom: 16, borderColor: 'var(--ok)' }} id="refund-card">
+          <strong>{order.refund.status === 'PROCESSED' ? `Refund of ${inr(order.refund.amount)} sent` : `Refund of ${inr(order.refund.amount)} on its way`}</strong>
+          <p style={{ margin: '4px 0 0', fontSize: 14, color: 'var(--muted)' }}>
+            {REFUND_REASON_TEXT[order.refund.reason as RefundReason] ?? 'Refund issued'}. It returns to the account you paid from, usually within 5 to 7 working days.
+          </p>
+        </div>
+      )}
+
+      {order.status !== 'Draft' && (
+        <div style={{ marginBottom: 16 }}>
+          <button
+            type="button"
+            className="btn btn-ghost sm"
+            id="invoice-btn"
+            onClick={async () => {
+              try {
+                await downloadFile(`/api/orders/${order.id}/invoice`, 'customer', `invoice-${order.id}.pdf`)
+              } catch {
+                setCancelError('Could not open the invoice. Try again.')
+              }
+            }}
+          >
+            Download invoice
+          </button>
+          {cancelError && !confirmCancel && <div className="alert alert--warn" role="alert" style={{ marginTop: 8 }}>{cancelError}</div>}
+        </div>
+      )}
+
+      {customerCanCancel(order.status) && order.status !== 'Draft' && (
+        <div className="card" style={{ padding: 20, marginBottom: 16 }} id="cancel-card">
+          {!confirmCancel ? (
+            <button type="button" className="btn btn-ghost" onClick={() => setConfirmCancel(true)}>Cancel this order</button>
+          ) : (
+            <>
+              <strong>Cancel order #{order.id}?</strong>
+              <ul style={{ margin: '8px 0 12px', paddingLeft: 18, fontSize: 14, color: 'var(--muted)' }}>
+                {CANCELLATION_POLICY.slice(0, 1).concat(CANCELLATION_POLICY.slice(3)).map((line) => <li key={line}>{line}</li>)}
+              </ul>
+              {cancelError && <div className="alert alert--warn" role="alert">{cancelError}</div>}
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button type="button" className="btn btn-primary" id="confirm-cancel-btn" onClick={async () => {
+                  const error = await cancelOrder(order.id)
+                  if (error) setCancelError(error)
+                  else setConfirmCancel(false)
+                }}>Yes, cancel and refund me</button>
+                <button type="button" className="btn btn-ghost" onClick={() => setConfirmCancel(false)}>Keep my order</button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
 
       {/* Main Details Grid */}
       <div className="tracker-grid">
@@ -179,7 +236,7 @@ export default function OrderTracker() {
               <strong>{order.addons.join(', ') || 'None'}</strong>
             </div>
             <div className="spec-row">
-              <span>Amount in Escrow</span>
+              <span>{order.status === 'Cancelled' ? 'Amount paid' : 'Held in escrow'}</span>
               <strong style={{ color: 'var(--brand)', fontSize: 18 }}>{inr(order.customerPaid)}</strong>
             </div>
             <div className="spec-row">

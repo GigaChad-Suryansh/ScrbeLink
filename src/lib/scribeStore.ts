@@ -31,6 +31,7 @@ export interface TrackableOrder {
   hasNotes?: boolean
   /** Where the pages are delivered: gate and college. No customer details. */
   deliverTo?: string
+  refund?: { amount: number; reason: string; status: 'PENDING' | 'PROCESSED' }
   customerPaid: number
   scribePayout: number
   createdAt: string
@@ -88,6 +89,8 @@ export interface ScribePortalContextType {
   dispatchOrder: (orderId: string) => ActionResult
   confirmDelivery: (orderId: string, code: string) => ActionResult
   withdraw: () => ActionResult
+  /** Customer only: cancel an order before writing starts. */
+  cancelOrder: (orderId: string) => ActionResult
 }
 
 export const ScribePortalContext = createContext<ScribePortalContextType | null>(null)

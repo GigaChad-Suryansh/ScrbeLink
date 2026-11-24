@@ -32,6 +32,10 @@ import { createDb, type Db, type Queryable } from './db'
 import { createUpiPaymentIntent, type UpiPaymentIntent } from './paymentGateway'
 import * as addr from './addresses'
 import * as files from './files'
+import { renderInvoice, sellerFromEnv } from './invoice'
+import * as rzp from './razorpay'
+import * as refunds from './refunds'
+import { REFUND_POLICY, customerCanCancel, type RefundReason } from '../shared/refunds'
 import * as sched from './scheduler'
 import * as logi from './logisticsService'
 import {
@@ -187,8 +191,11 @@ async function storeUpload(q: Queryable, bytes: Buffer, type: string, kind: file
 const bodyOf = (req: Request): Record<string, unknown> =>
   req.body && typeof req.body === 'object' ? (req.body as Record<string, unknown>) : {}
 
+/** Test mode refunds are final at once. A real gateway confirms them later by webhook. */
+const refundsAreInstant = () => rzp.paymentProvider() !== 'razorpay'
+
 const demoOtpEnabled = () => !isProduction() || process.env.DEMO_OTP === 'true'
-const testPaymentsAllowed = () => !isProduction() || process.env.ALLOW_TEST_PAYMENTS === 'true'
+const testPaymentsAllowed = () => rzp.paymentProvider() === 'test' && (!isProduction() || process.env.ALLOW_TEST_PAYMENTS === 'true')
 
 const ownsOrder = (o: OrderDoc, s: Session) => o.customerPhone !== undefined && o.customerPhone === s.phone
 
@@ -219,8 +226,12 @@ async function newOrderId(q: Queryable): Promise<string> {
 }
 
 /** Moves an order to a new state and runs that state's side effects. The caller has already validated it. */
-async function applyTransition(q: Queryable, order: OrderDoc, next: OrderStateEnum, note: string): Promise<void> {
+async function applyTransition(q: Queryable, order: OrderDoc, next: OrderStateEnum, note: string, refundReason: RefundReason = 'ADMIN_CANCELLED'): Promise<void> {
   order.status = next
+  if (next === 'Cancelled') {
+    const refund = await refunds.recordRefund(q, order, refundReason, refundsAreInstant())
+    if (refund) await sched.audit(q, `[REFUND] ₹${refund.amount} for ${order.id} (${refund.reason}).`)
+  }
   if (next === 'Closed' || next === 'Cancelled') await files.startRetention(q, order.id)
   // Check-ins only matter while the scribe is writing. After that, a late timer must not cost them a strike.
   if (next !== 'Writing') await sched.closeRushWatch(q, order.id)
@@ -281,8 +292,19 @@ export async function runScheduledJobs(db: Db, now: Date) {
         await applyTransition(q, order, 'Reassigned', 'Missed hourly check-in. Returned to the pool; restart from page 1.')
       }
     }
+    // A paid order nobody takes is cancelled and refunded, so the customer is never left waiting.
+    const waiting = (await q.query(`SELECT * FROM orders WHERE status IN ('Paid','Reassigned')`)).map(orderFromRow)
+    let unclaimedRefunded = 0
+    for (const o of waiting) {
+      const since = new Date(o.timeline.at(-1)?.timestamp ?? o.createdAt).getTime()
+      if (now.getTime() - since < REFUND_POLICY.unacceptedHours * 3_600_000) continue
+      const locked = await fetchOrder(q, o.id, true)
+      if (!locked || !['Paid', 'Reassigned'].includes(locked.status)) continue
+      await applyTransition(q, locked, 'Cancelled', `No scribe accepted within ${REFUND_POLICY.unacceptedHours} hours. Refunded in full.`, 'NO_SCRIBE')
+      unclaimedRefunded++
+    }
     const filesDeleted = await files.sweepFiles(q, store, now)
-    return { escrowReleased, rushResults, filesDeleted }
+    return { escrowReleased, rushResults, filesDeleted, unclaimedRefunded }
   })
 }
 
@@ -359,6 +381,29 @@ export function createApp(db: Db) {
 
   app.use(helmet())
   app.use(cors({ origin: corsOrigins() }))
+  // Razorpay signs the exact bytes it sends, so this route reads the raw body before the JSON parser.
+  app.post('/api/payment/razorpay/webhook', express.raw({ type: '*/*', limit: '1mb' }), async (req, res) => {
+    const cfg = rzp.razorpayConfig()
+    const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0)
+    const signature = req.header('x-razorpay-signature') ?? ''
+    if (!cfg || !signature || !rzp.verifyWebhookSignature(raw, signature, cfg.webhookSecret)) return res.status(400).json({ error: 'Bad signature' })
+    let event: any
+    try { event = JSON.parse(raw.toString('utf8')) } catch { return res.status(400).json({ error: 'Bad body' }) }
+
+    await db.tx(async (q) => {
+      if (event.event === 'payment.captured') {
+        const p = event.payload?.payment?.entity
+        const found = p && (await q.query(`SELECT payment_id, intent FROM payments WHERE intent->>'rzpOrderId' = $1`, [String(p.order_id)]))
+        if (found?.length && Math.round(found[0].intent.amount * 100) === p.amount) await settlePaid(q, found[0].payment_id, String(p.id))
+      } else if (event.event === 'refund.processed') {
+        const r = event.payload?.refund?.entity
+        const found = r && (await q.query('SELECT order_id FROM refunds WHERE gateway_refund_id = $1', [String(r.id)]))
+        if (found?.length) await refunds.markProcessed(q, found[0].order_id)
+      }
+    })
+    return res.json({ received: true })
+  })
+
   app.use(express.json({ limit: '1mb' }))
 
   const limit = (max: number) =>
@@ -514,6 +559,62 @@ export function createApp(db: Db) {
     return res.json(out)
   })
 
+  app.get('/api/payment/config', requireAuth('customer', 'admin'), (_req, res) => {
+    const cfg = rzp.razorpayConfig()
+    res.json({ provider: rzp.paymentProvider(), keyId: rzp.paymentProvider() === 'razorpay' ? cfg?.keyId : undefined })
+  })
+
+  /** Marks a payment successful and the order Paid. Safe to call twice (client and webhook both do). */
+  async function settlePaid(q: Queryable, paymentId: string, rzpPaymentId?: string) {
+    const rows = await q.query<{ intent: UpiPaymentIntent }>('SELECT intent FROM payments WHERE payment_id = $1 FOR UPDATE', [paymentId])
+    const intent = rows[0]?.intent
+    if (!intent || intent.status === 'SUCCESS') return
+    const order = await fetchOrder(q, intent.orderId, true)
+    if (!order) return
+    intent.status = 'SUCCESS'
+    if (rzpPaymentId) intent.rzpPaymentId = rzpPaymentId
+    await q.query('UPDATE payments SET intent = $2::jsonb WHERE payment_id = $1', [paymentId, JSON.stringify(intent)])
+    if (order.status === 'Draft') await applyTransition(q, order, 'Paid', 'Payment received.')
+    // The customer cancelled while the payment was still in flight: give the money straight back.
+    else if (order.status === 'Cancelled') await refunds.recordRefund(q, order, 'CUSTOMER_CANCELLED', refundsAreInstant())
+  }
+
+  app.post('/api/payment/razorpay/order', sensitiveLimit, requireAuth('customer', 'admin'), async (req, res) => {
+    const cfg = rzp.razorpayConfig()
+    if (rzp.paymentProvider() !== 'razorpay' || !cfg) return res.status(503).json({ error: 'Online payments are not set up yet' })
+    const order = await fetchOrder(db, idLike(bodyOf(req).orderId, 'orderId'))
+    if (!order || !canView(order, sessionOf(res))) throw notFound('Order not found')
+    if (order.status !== 'Draft') throw new HttpError(409, 'This order has already been paid')
+
+    // The server prices the order. The browser never says how much to charge.
+    const made = await rzp.createRazorpayOrder(cfg, order.customerTotal, order.id)
+    const paymentId = `PAY-${Date.now()}-${randomToken(3)}`
+    const intent: UpiPaymentIntent = {
+      paymentId, orderId: order.id, amount: order.customerTotal, payerVpa: '', payeeVpa: '', qrDataUrl: '', deepLink: '',
+      status: 'INITIATED', createdAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 30 * 60_000).toISOString(),
+      provider: 'razorpay', rzpOrderId: made.id,
+    }
+    await db.query('INSERT INTO payments (payment_id, order_id, intent) VALUES ($1,$2,$3::jsonb)', [paymentId, order.id, JSON.stringify(intent)])
+    return res.json({ success: true, paymentId, keyId: cfg.keyId, rzpOrderId: made.id, amount: order.customerTotal })
+  })
+
+  app.post('/api/payment/razorpay/verify', sensitiveLimit, requireAuth('customer', 'admin'), async (req, res) => {
+    const cfg = rzp.razorpayConfig()
+    if (rzp.paymentProvider() !== 'razorpay' || !cfg) return res.status(503).json({ error: 'Online payments are not set up yet' })
+    const b = bodyOf(req)
+    const paymentId = str(b.paymentId, 'paymentId', { max: 60 })
+    const rzpPaymentId = str(b.razorpayPaymentId, 'razorpayPaymentId', { max: 60 })
+    const signature = str(b.razorpaySignature, 'razorpaySignature', { max: 200 })
+    const out = await db.tx(async (q) => {
+      const { intent } = await loadPayment(q, paymentId, sessionOf(res), true)
+      if (intent.provider !== 'razorpay' || !intent.rzpOrderId) throw new HttpError(400, 'Not an online payment')
+      if (!rzp.verifyCheckoutSignature(intent.rzpOrderId, rzpPaymentId, signature, cfg.keySecret)) throw new HttpError(400, 'Payment could not be verified')
+      await settlePaid(q, paymentId, rzpPaymentId)
+      return { success: true }
+    })
+    return res.json(out)
+  })
+
   app.get('/api/payment/:id', requireAuth('customer', 'admin'), async (req, res) => {
     const { intent } = await loadPayment(db, str(req.params.id, 'payment id', { max: 60 }), sessionOf(res))
     return res.json({ success: true, payment: intent })
@@ -535,12 +636,16 @@ export function createApp(db: Db) {
         : ''
       rows = await db.query(`SELECT * FROM orders WHERE scribe_id = $1 ${open} ORDER BY seq DESC`, [me])
     }
-    res.json({ success: true, orders: rows.map(orderFromRow).map((o) => publicOrder(o, s)) })
+    const list = rows.map(orderFromRow)
+    const rf = s.role === 'scribe' ? new Map() : await refunds.refundsFor(db, list.map((o) => o.id))
+    res.json({ success: true, orders: list.map((o) => ({ ...publicOrder(o, s), ...(rf.has(o.id) ? { refund: rf.get(o.id) } : {}) })) })
   })
 
   app.get('/api/orders/:id', requireAuth(), async (req, res) => {
-    const order = await loadVisible(db, idLike(req.params.id, 'order id'), sessionOf(res))
-    res.json({ success: true, order: publicOrder(order, sessionOf(res)) })
+    const s = sessionOf(res)
+    const order = await loadVisible(db, idLike(req.params.id, 'order id'), s)
+    const refund = s.role === 'scribe' ? undefined : (await refunds.refundsFor(db, [order.id])).get(order.id)
+    res.json({ success: true, order: { ...publicOrder(order, s), ...(refund ? { refund } : {}) } })
   })
 
   app.post('/api/orders/create', requireAuth('customer', 'admin'), async (req, res) => {
@@ -625,6 +730,9 @@ export function createApp(db: Db) {
         }
       } else if (s.role === 'customer') {
         if (!CUSTOMER_TARGETS.has(next)) throw forbid()
+        if (next === 'Cancelled' && !customerCanCancel(order.status)) {
+          throw forbid('You can no longer cancel because writing has started. If something is wrong with the delivered notes, open a dispute.')
+        }
       }
 
       const check = validateTransition(order.status, next)
@@ -638,7 +746,7 @@ export function createApp(db: Db) {
 
       order.scribeId = scribeId
       order.scribeName = scribeId ? (await logi.getScribe(q, scribeId))?.name ?? scribeId : undefined
-      await applyTransition(q, order, next, note ?? check.auditLog)
+      await applyTransition(q, order, next, note ?? check.auditLog, s.role === 'customer' ? 'CUSTOMER_CANCELLED' : 'ADMIN_CANCELLED')
       return { order: publicOrder(order, s), audit: check.auditLog }
     })
     return res.json({ success: true, ...out })
@@ -778,6 +886,18 @@ export function createApp(db: Db) {
     },
   )
 
+  app.get('/api/orders/:id/invoice', requireAuth('customer', 'admin'), async (req, res) => {
+    const s = sessionOf(res)
+    const order = await loadVisible(db, idLike(req.params.id, 'order id'), s)
+    if (!order.timeline.some((t) => t.status === 'Paid')) throw new HttpError(409, 'An invoice is available once the order is paid')
+    const refund = (await refunds.refundsFor(db, [order.id])).get(order.id)
+    const pdf = await renderInvoice(order, sellerFromEnv(), refund)
+    res.setHeader('Content-Type', 'application/pdf')
+    res.setHeader('Content-Disposition', `attachment; filename="invoice-${order.id}.pdf"`)
+    res.setHeader('Cache-Control', 'private, no-store')
+    res.send(pdf)
+  })
+
   app.get('/api/orders/:id/notes', requireAuth(), async (req, res) => {
     const s = sessionOf(res)
     const order = await loadVisible(db, idLike(req.params.id, 'order id'), s)
@@ -837,13 +957,19 @@ export function createApp(db: Db) {
     const now = given === undefined ? new Date() : new Date(str(given, 'simulatedTimestamp', { max: 40 }))
     if (Number.isNaN(now.getTime())) throw new ValidationError('simulatedTimestamp is not a valid date')
 
-    const { escrowReleased, rushResults, filesDeleted } = await runScheduledJobs(db, now)
+    const { escrowReleased, rushResults, filesDeleted, unclaimedRefunded } = await runScheduledJobs(db, now)
+    const cfg = rzp.razorpayConfig()
+    const refundsSent = cfg && rzp.paymentProvider() === 'razorpay'
+      ? await refunds.sendPendingRefunds(db, (paymentId, amount, orderId) => rzp.refundRazorpayPayment(cfg, paymentId, amount, orderId))
+      : undefined
     return res.json({
       success: true,
       simulatedTime: now.toISOString(),
       escrowReleased,
       rushResults,
       filesDeleted,
+      unclaimedRefunded,
+      refundsSent,
       auditLogs: await sched.getAuditLogs(db, 10),
     })
   })
@@ -963,12 +1089,19 @@ export function createApp(db: Db) {
 
       const r = await logi.resolveDispute(q, id, decision, adminNotes)
       await sched.settleEscrow(q, existing.orderId, decision)
+      if (order && decision !== 'RELEASED_TO_SCRIBE') {
+        await refunds.recordRefund(q, order, decision === 'SPLIT' ? 'DISPUTE_SPLIT' : 'DISPUTE_UPHELD', refundsAreInstant())
+      }
       if (order && validateTransition(order.status, 'Closed').success) {
         await applyTransition(q, order, 'Closed', `Dispute ${id} ruled ${decision}.`)
       }
       return r
     })
     return res.json({ success: true, dispute: resolved })
+  })
+
+  app.get('/api/admin/refunds', requireAuth('admin'), async (_req, res) => {
+    res.json({ success: true, refunds: await refunds.allRefunds(db) })
   })
 
   app.get('/api/admin/scribes', requireAuth('admin'), async (_req, res) => {

@@ -110,6 +110,18 @@ export async function fetchBlobUrl(path: string, as: Role): Promise<string> {
   return URL.createObjectURL(await res.blob())
 }
 
+/** Downloads a protected file. A normal download is never blocked the way a pop-up window can be. */
+export async function downloadFile(path: string, as: Role, filename: string): Promise<void> {
+  const url = await fetchBlobUrl(path, as)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 10_000)
+}
+
 // ── Sign-in ──────────────────────────────────────────────────────────────────
 
 export async function sendOtp(phone: string): Promise<{ devOtp?: string }> {

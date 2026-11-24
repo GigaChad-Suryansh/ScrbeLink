@@ -20,3 +20,13 @@ The web app (Vite build) and the API (Express, run with `tsx`) deploy separately
 - Otherwise build the web app with `VITE_API_URL=https://your-api-host` and list the web origin in the API's `CORS_ORIGINS`.
 - Set `SESSION_SECRET` (32+ characters), `ADMIN_PHONES`, `CRON_SECRET` and `TRUST_PROXY` as in `.env.example`.
 - The API also runs the escrow and rush-protocol jobs every minute; platform cron can still call `/api/cron/trigger-jobs`.
+
+## Payments with Razorpay
+
+1. In the Razorpay dashboard (test mode first), copy the key id and key secret.
+2. Add a webhook pointing to `https://<your-api>/api/payment/razorpay/webhook` with the events `payment.captured` and `refund.processed`. Copy the webhook secret.
+3. On the API host set `PAYMENT_PROVIDER=razorpay`, `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET`.
+4. Run `/api/cron/trigger-jobs` every hour. It cancels orders nobody accepted within 6 hours, sends refunds to Razorpay, and deletes expired files.
+5. Place one test payment and one cancellation, and check the refund shows as sent after Razorpay's webhook arrives.
+
+The front end loads Razorpay's checkout from `checkout.razorpay.com`. `vercel.json` already allows it. If the API is on a different domain from the site, also add that domain to `connect-src` in `vercel.json`.

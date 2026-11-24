@@ -332,6 +332,83 @@ describe('web app wiring', () => {
     assert.match(d.body.task.dropGate, /Gate 3.*NSUT/)
   })
 
+  describe('refunds', () => {
+    const make = async (token: string) => (await call('POST', '/api/orders/create', { token, body: { words: 2000, dropGate: GATE } })).body.order.id as string
+    const move = (id: string, token: string, nextStatus: string) => call('POST', `/api/orders/${id}/transition`, { token, body: { nextStatus } })
+    const jobs = (hoursFromNow: number) => call('POST', '/api/cron/trigger-jobs', { token: admin, body: { simulatedTimestamp: new Date(Date.now() + hoursFromNow * 3_600_000).toISOString() } })
+
+    test('cancelling a paid order refunds all of it, once', async () => {
+      const id = await make(cust)
+      await pay(cust, id)
+      assert.equal((await move(id, cust, 'Cancelled')).status, 200)
+      const order = (await call('GET', `/api/orders/${id}`, { token: cust })).body.order
+      assert.equal(order.status, 'Cancelled')
+      assert.equal(order.refund.amount, order.customerTotal)
+      assert.equal(order.refund.reason, 'CUSTOMER_CANCELLED')
+      assert.equal(order.refund.status, 'PROCESSED')
+      assert.equal((await move(id, cust, 'Cancelled')).status, 403, 'cannot cancel twice')
+      assert.equal((await call('GET', `/api/orders/${id}`, { token: scribe })).body.order.refund, undefined, 'scribes never see refunds')
+      assert.ok((await call('GET', '/api/admin/refunds', { token: admin })).body.refunds.some((r: any) => r.orderId === id))
+    })
+
+    test('an unpaid order has nothing to refund', async () => {
+      const id = await make(cust)
+      assert.equal((await move(id, cust, 'Cancelled')).status, 200)
+      assert.equal((await call('GET', `/api/orders/${id}`, { token: cust })).body.order.refund, undefined)
+    })
+
+    test('a customer cannot cancel once writing has started, but support can', async () => {
+      const id = await make(cust)
+      await pay(cust, id)
+      await move(id, scribe, 'Accepted')
+      await move(id, scribe, 'Writing')
+      assert.equal((await move(id, cust, 'Cancelled')).status, 403)
+      assert.equal((await move(id, admin, 'Cancelled')).status, 200)
+      const refund = (await call('GET', `/api/orders/${id}`, { token: cust })).body.order.refund
+      assert.equal(refund.reason, 'ADMIN_CANCELLED')
+    })
+
+    test('an order nobody takes is cancelled and refunded after 6 hours', async () => {
+      const id = await make(cust)
+      await pay(cust, id)
+      await jobs(5)
+      assert.equal((await call('GET', `/api/orders/${id}`, { token: cust })).body.order.status, 'Paid', 'still waiting at 5 hours')
+      const ran = await jobs(7)
+      assert.ok(ran.body.unclaimedRefunded >= 1)
+      const order = (await call('GET', `/api/orders/${id}`, { token: cust })).body.order
+      assert.equal(order.status, 'Cancelled')
+      assert.equal(order.refund.reason, 'NO_SCRIBE')
+    })
+
+    test('disputes: upheld refunds everything, split refunds half, a ruling for the scribe refunds nothing', async () => {
+      const outcomes: Array<[string, string | undefined, number]> = [['REFUNDED_TO_CUSTOMER', 'DISPUTE_UPHELD', 1], ['SPLIT', 'DISPUTE_SPLIT', 0.5], ['RELEASED_TO_SCRIBE', undefined, 0]]
+      for (const [decision, reason, share] of outcomes) {
+        const id = await make(cust)
+        await pay(cust, id)
+        await move(id, scribe, 'Accepted'); await move(id, scribe, 'Writing'); await move(id, scribe, 'Dispatched'); await move(id, admin, 'Delivered')
+        const up = await call('POST', '/api/uploads/video', { token: cust, raw: MP4, name: 'v.mp4' })
+        const filed = await call('POST', '/api/disputes/file', { token: cust, body: { orderId: id, reason: 'OTHER', unboxingVideoUrl: up.body.url } })
+        const resolved = await call('POST', `/api/admin/disputes/${filed.body.dispute.id}/resolve`, { token: admin, body: { decision, adminNotes: 'ok' } })
+        assert.equal(resolved.status, 200, decision)
+        const order = (await call('GET', `/api/orders/${id}`, { token: cust })).body.order
+        assert.equal(order.refund?.reason, reason, decision)
+        if (reason) assert.equal(order.refund.amount, order.customerTotal * share, decision)
+      }
+    })
+  })
+
+  test('invoice: only for paid orders, only for the owner, and shows refunds', async () => {
+    const id = (await call('POST', '/api/orders/create', { token: cust, body: { words: 2000, dropGate: GATE } })).body.order.id
+    assert.equal((await call('GET', `/api/orders/${id}/invoice`, { token: cust })).status, 409, 'not paid yet')
+    await pay(cust, id)
+    const res = await fetch(`${base}/api/orders/${id}/invoice`, { headers: { Authorization: `Bearer ${cust}` } })
+    assert.equal(res.status, 200)
+    assert.equal(res.headers.get('content-type'), 'application/pdf')
+    assert.equal(Buffer.from(await res.arrayBuffer()).subarray(0, 5).toString(), '%PDF-')
+    assert.equal((await call('GET', `/api/orders/${id}/invoice`, { token: other })).status, 404)
+    assert.equal((await call('GET', `/api/orders/${id}/invoice`, { token: scribe })).status, 403)
+  })
+
   test('health reports the database', async () => {
     const h = await call('GET', '/api/health')
     assert.equal(h.status, 200)

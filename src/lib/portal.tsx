@@ -31,6 +31,7 @@ interface ApiOrder {
   penStyle: string
   deliveryOtp?: string
   notesFileId?: string
+  refund?: { amount: number; reason: string; status: 'PENDING' | 'PROCESSED' }
   dropGate?: { college: string; line: string; landmark?: string; pincode: string; contactName?: string }
   createdAt: string
   intakeDeadline?: string
@@ -76,6 +77,7 @@ function toTrackable(o: ApiOrder): TrackableOrder {
     timeline: o.timeline.map((t) => ({ status: t.status as OrderStatus, timestamp: when(t.timestamp), note: t.note })),
     otp: o.deliveryOtp,
     hasNotes: Boolean(o.notesFileId),
+    refund: o.refund,
     deliverTo: o.dropGate ? [o.dropGate.line, o.dropGate.college].join(', ') : undefined,
   }
 }
@@ -155,6 +157,7 @@ export function PortalProvider({ role, children }: { role: Role; children: React
       submitCheckIn: (id, note) => run(() => api('POST', `/api/orders/${id}/checkin`, { as: role, body: { note: note || undefined } })),
       dispatchOrder: (id) => run(() => api('POST', '/api/logistics/dispatch', { as: role, body: { orderId: id } })),
       confirmDelivery: (id, code) => run(() => api('POST', '/api/logistics/confirm-delivery', { as: role, body: { orderId: id, deliveryOtp: code } })),
+      cancelOrder: (id) => run(() => move(id, 'Cancelled')),
       withdraw: () => run(async () => applyMe(await api<ScribeMe>('POST', '/api/scribe/withdraw', { as: 'scribe' }))),
     }
   }, [profile, orders, payouts, loading, loadError, refresh, run, role, applyMe])

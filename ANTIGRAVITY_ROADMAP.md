@@ -76,7 +76,9 @@ Things a real launch needs that are not on any list yet:
 - Price and time estimate depend on distance between the two (Porter fare plus margin). Update the pricing rules and the calculator to match.
 - **Done when:** checkout asks "deliver to which gate?" and shows an estimated delivery time.
 
-### Phase 12: Real payments and refunds
+### Phase 12: Real payments and refunds (mostly done)
+- Done: refund ledger (one refund per order) with rules in `src/shared/refunds.ts`: customers cancel until writing starts for a full refund; orders nobody accepts within 6 hours are cancelled and refunded; disputes refund in full, half, or nothing; admin sees all refunds; customers see their refund and can download an invoice. Razorpay adapter with checkout window, signature checks, webhook (payment captured, refund processed) and refund sending are built and tested with a faked network. Setup steps are in `DEPLOYMENT.md`.
+- Not yet done: try it once against a real Razorpay test account; check the invoice wording and GST rate with an accountant; payment retry for failed attempts and cleanup of abandoned Draft orders; partial refund by admin; credit note document for refunds.
 - Razorpay (UPI and cards) with webhook verification, idempotent orders, and failed-payment retry.
 - Refund flow with reasons: no scribe in time, scribe suspended, dispute upheld, customer cancelled before accept.
 - Cancellation rules shown before paying.

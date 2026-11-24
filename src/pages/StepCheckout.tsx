@@ -6,7 +6,7 @@
  * - Enforces escrow lock upon successful payment
  */
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import Icon from '../components/Icons'
 import { useOrder } from '../lib/orderStore'
@@ -15,6 +15,8 @@ import type { UpiPaymentIntent } from '../backend/paymentGateway'
 import { getPendingNotes } from '../lib/pendingFile'
 import { api } from '../lib/api'
 import GatePicker from '../components/GatePicker'
+import { CANCELLATION_POLICY } from '../shared/refunds'
+import { payWithRazorpay } from '../lib/razorpayCheckout'
 
 export default function StepCheckout() {
   const { state, dispatch } = useOrder()
@@ -25,6 +27,15 @@ export default function StepCheckout() {
   const [paying, setPaying] = useState(false)
   const [upiError, setUpiError] = useState('')
   const [gateId, setGateId] = useState<string | null>(null)
+  const [provider, setProvider] = useState<'test' | 'razorpay'>('test')
+  /** Kept so a customer who closes the payment window can retry without creating a second order. */
+  const [draftOrderId, setDraftOrderId] = useState<string | null>(null)
+
+  useEffect(() => {
+    api<{ provider: 'test' | 'razorpay' }>('GET', '/api/payment/config', { as: 'customer' })
+      .then((c) => setProvider(c.provider))
+      .catch(() => undefined)
+  }, [])
 
   const q = quote({
     words: state.words,
@@ -49,7 +60,7 @@ export default function StepCheckout() {
       setUpiError('Choose where to deliver your pages first.')
       return
     }
-    if (!validateUpi(upi)) {
+    if (provider === 'test' && !validateUpi(upi)) {
       setUpiError('Enter a valid UPI ID (e.g. name@okhdfcbank or name@paytm)')
       return
     }
@@ -57,14 +68,14 @@ export default function StepCheckout() {
     setPaying(true)
     try {
       // 0. Send the notes so the scribe can read them once they accept the order.
-      const notes = getPendingNotes()
+      const notes = draftOrderId ? null : getPendingNotes()
       let notesFileId: string | undefined
       if (notes) {
         const up = await api<{ fileId: string }>('POST', '/api/uploads/notes', { as: 'customer', raw: notes, headers: { 'x-file-name': encodeURIComponent(notes.name) } })
         notesFileId = up.fileId
       }
       // 1. The server creates the order and prices it itself.
-      const created = await api<{ order: { id: string } }>('POST', '/api/orders/create', {
+      const created = draftOrderId ? { order: { id: draftOrderId } } : await api<{ order: { id: string } }>('POST', '/api/orders/create', {
         as: 'customer',
         body: {
           title: (state.doc?.name ?? 'Untitled document').replace(/\.[^.]+$/, ''),
@@ -81,6 +92,16 @@ export default function StepCheckout() {
         },
       })
       const orderId = created.order.id
+      setDraftOrderId(orderId)
+
+      if (provider === 'razorpay') {
+        const rz = await api<{ paymentId: string; keyId: string; rzpOrderId: string; amount: number }>('POST', '/api/payment/razorpay/order', { as: 'customer', body: { orderId } })
+        const paid = await payWithRazorpay({ keyId: rz.keyId, rzpOrderId: rz.rzpOrderId, amountRupees: rz.amount, description: `Order ${orderId}` })
+        await api('POST', '/api/payment/razorpay/verify', { as: 'customer', body: { paymentId: rz.paymentId, razorpayPaymentId: paid.razorpay_payment_id, razorpaySignature: paid.razorpay_signature } })
+        dispatch({ type: 'PLACE_ORDER', orderId })
+        nav('/order/confirmation')
+        return
+      }
 
       // 2. Start the UPI payment for exactly that amount.
       const started = await api<{ payment: UpiPaymentIntent }>('POST', '/api/payment/upi/initiate', {
@@ -199,9 +220,17 @@ export default function StepCheckout() {
               </p>
             </div>
 
+            <details style={{ marginBottom: 14, fontSize: 13, color: 'var(--muted)' }}>
+              <summary style={{ cursor: 'pointer' }}>Cancellation and refunds</summary>
+              <ul style={{ margin: '8px 0 0', paddingLeft: 18 }}>
+                {CANCELLATION_POLICY.map((line) => <li key={line}>{line}</li>)}
+              </ul>
+            </details>
+
             {/* UPI Test Gateway Form */}
             {!paymentIntent ? (
               <>
+                {provider === 'test' && (<>
                 <div className="field" style={{ marginBottom: 8 }}>
                   <label htmlFor="upi-input" style={{ fontWeight: 600, fontSize: 14 }}>
                     Your UPI VPA (Test Gateway)
@@ -232,15 +261,16 @@ export default function StepCheckout() {
                     </button>
                   ))}
                 </div>
+                </>)}
 
                 <button
                   className="btn btn-primary full"
                   onClick={onInitiatePayment}
-                  disabled={paying || !upi || !gateId}
+                  disabled={paying || (provider === 'test' && !upi) || !gateId}
                   id="pay-btn"
                   style={{ fontSize: 16 }}
                 >
-                  Pay {inr(q.customerTotal)} with UPI
+                  Pay {inr(q.customerTotal)}{provider === 'test' ? ' with UPI' : ''}
                 </button>
               </>
             ) : (

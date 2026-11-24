@@ -12,7 +12,7 @@ import { Link } from 'react-router-dom'
 import { useScribePortal } from '../lib/scribeStore'
 import { inr } from '../lib/pricing'
 import Icon from '../components/Icons'
-import { fetchBlobUrl } from '../lib/api'
+import { downloadFile } from '../lib/api'
 
 export default function ScribeDashboard() {
   const { profile, orders, loading, loadError, acceptOrder, startWriting, submitCheckIn, dispatchOrder, confirmDelivery } = useScribePortal()
@@ -163,14 +163,13 @@ export default function ScribeDashboard() {
                         style={{ marginBottom: 12 }}
                         onClick={async () => {
                           try {
-                            const url = await fetchBlobUrl(`/api/orders/${order.id}/notes`, 'scribe')
-                            window.open(url, '_blank', 'noopener')
+                            await downloadFile(`/api/orders/${order.id}/notes`, 'scribe', `notes-${order.id}`)
                           } catch {
                             setActionError('Could not open the notes. Try again.')
                           }
                         }}
                       >
-                        <Icon name="file" size={16} /> Open the notes to write
+                        <Icon name="file" size={16} /> Download the notes to write
                       </button>
                     )}
 

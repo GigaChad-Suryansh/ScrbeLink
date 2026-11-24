@@ -17,6 +17,10 @@ export interface UpiPaymentIntent {
   status: 'INITIATED' | 'PENDING_USER' | 'SUCCESS' | 'FAILED'
   createdAt: string
   expiresAt: string
+  /** Set when the payment goes through Razorpay instead of the test gateway. */
+  provider?: 'test' | 'razorpay'
+  rzpOrderId?: string
+  rzpPaymentId?: string
 }
 
 export function createUpiPaymentIntent(
