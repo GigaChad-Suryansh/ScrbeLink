@@ -32,6 +32,7 @@ import { createDb, type Db, type Queryable } from './db'
 import { createUpiPaymentIntent, type UpiPaymentIntent } from './paymentGateway'
 import * as addr from './addresses'
 import * as courier from './courier'
+import * as notify from './notify'
 import type { CourierTask } from '../shared/logisticsDisputes'
 import * as files from './files'
 import { renderInvoice, sellerFromEnv } from './invoice'
@@ -250,6 +251,7 @@ async function applyTransition(q: Queryable, order: OrderDoc, next: OrderStateEn
 
   order.timeline.push({ status: next, timestamp: new Date().toISOString(), note })
   await saveOrder(q, order)
+  await notify.notifyOrderEvent(q, order, next)
 }
 
 /** A scribe may take work only once an admin has approved their handwriting card. */
@@ -1254,6 +1256,15 @@ export function createApp(db: Db) {
       return logi.manageScribeStrike(q, id, delta)
     })
     return res.json({ success: true, scribe })
+  })
+
+  app.get('/api/notifications', requireAuth('customer', 'scribe'), async (_req, res) => {
+    res.json({ success: true, ...(await notify.inbox(db, sessionOf(res).phone)) })
+  })
+
+  app.post('/api/notifications/read', requireAuth('customer', 'scribe'), async (_req, res) => {
+    await notify.markAllRead(db, sessionOf(res).phone)
+    res.json({ success: true })
   })
 
   app.get('/api/admin/notifications', requireAuth('admin'), async (_req, res) => {

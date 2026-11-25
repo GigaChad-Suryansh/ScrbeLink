@@ -96,7 +96,8 @@ Things a real launch needs that are not on any list yet:
 - Parcel packaging checklist for the scribe and a proof photo before dispatch; unboxing video guidance for the customer.
 - **Done when:** a test booking moves the order from Dispatched to Delivered by webhook only, with the OTP check, and a failed pickup rebooks.
 
-### Phase 14: Notifications
+### Phase 14: Notifications (in-app and dedupe done)
+- Done: every order status change messages the right person exactly once (paid, accepted, writing, delivered, disputed, closed, cancelled; rider assigned and dispatched already existed); messages are stored per recipient with a dedupe key; a Messages list with an unread count in the header. Not yet done: a real WhatsApp/SMS provider (plug into `notify.ts`), email for invoices, per-channel settings, retry of failed sends, check-in-missed and dispute-resolved messages.
 - WhatsApp (or SMS fallback) for: order paid, scribe accepted, writing started, check-in missed, dispatched with tracking link, delivered, dispute opened/resolved, payout sent.
 - Email for invoices.
 - In-app notification list with unread count.

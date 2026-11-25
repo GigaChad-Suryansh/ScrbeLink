@@ -6,6 +6,7 @@
 
 import { Link, Outlet, useLocation } from 'react-router-dom'
 import { useScribePortal } from '../lib/scribeStore'
+import NotificationBell from './NotificationBell'
 import { signOut, useSessions, type Role } from '../lib/api'
 import { inr } from '../lib/pricing'
 
@@ -42,6 +43,7 @@ export default function ScribeLayout({ role }: { role: Role }) {
                 <Link to="/order/upload">New order</Link>
               </>
             )}
+            {role !== 'admin' && <NotificationBell role={role} />}
             <button
               type="button"
               className="btn btn-ghost sm"

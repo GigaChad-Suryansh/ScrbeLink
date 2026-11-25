@@ -174,4 +174,14 @@ export const MIGRATIONS: Migration[] = [
       )`,
     ],
   },
+  {
+    version: 5,
+    sql: [
+      `ALTER TABLE notifications ADD COLUMN recipient text`,
+      `ALTER TABLE notifications ADD COLUMN dedupe_key text`,
+      `ALTER TABLE notifications ADD COLUMN read_at timestamptz`,
+      `CREATE UNIQUE INDEX notifications_dedupe_idx ON notifications (dedupe_key) WHERE dedupe_key IS NOT NULL`,
+      `CREATE INDEX notifications_recipient_idx ON notifications (recipient, id DESC)`,
+    ],
+  },
 ]

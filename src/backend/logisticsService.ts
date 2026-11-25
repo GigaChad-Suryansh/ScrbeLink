@@ -208,7 +208,7 @@ export async function sendNotification(q: Queryable, recipient: string, channel:
     sentAt: new Date().toLocaleTimeString(),
     status: 'DELIVERED',
   }
-  await q.query('INSERT INTO notifications (record) VALUES ($1::jsonb)', [JSON.stringify(log)])
+  await q.query('INSERT INTO notifications (record, recipient) VALUES ($1::jsonb, $2)', [JSON.stringify(log), recipient])
   return log
 }
 
