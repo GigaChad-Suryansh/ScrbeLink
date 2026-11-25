@@ -17,9 +17,20 @@ export interface CourierTask {
   courierRiderPhone: string
   deliveryOtp: string
   gateDropPhotoUrl?: string
-  status: 'ASSIGNED' | 'OUT_FOR_DELIVERY' | 'DELIVERED_AT_GATE' | 'FAILED'
+  status: 'BOOKING_REQUESTED' | 'RIDER_ASSIGNED' | 'PICKED_UP' | 'ASSIGNED' | 'OUT_FOR_DELIVERY' | 'DELIVERED_AT_GATE' | 'FAILED'
   createdAt: string
   deliveredAt?: string
+  /** Manual courier flow only. The scribe reads the pickup code to the rider. */
+  pickupOtp?: string
+  /** Secret part of the private link sent to the rider. Never shown to customers or scribes. */
+  riderToken?: string
+  trackingUrl?: string
+  pickupContact?: { name: string; phone: string }
+  dropContact?: { name: string; phone: string }
+  pickedUpAt?: string
+  /** How many riders have been booked for this parcel (1 = first try). */
+  attempts?: number
+  history?: Array<{ at: string; event: string }>
 }
 
 export interface DisputeRecord {

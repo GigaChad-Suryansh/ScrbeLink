@@ -12,8 +12,9 @@ import { Link } from 'react-router-dom'
 import type { AdminScribeApproval, DisputeRecord, NotificationLog } from '../shared/logisticsDisputes'
 import { api, fetchBlobUrl } from '../lib/api'
 import { inr } from '../lib/pricing'
+import AdminCouriers from '../components/AdminCouriers'
 
-type Tab = 'cards' | 'disputes' | 'strikes' | 'notifications' | 'refunds'
+type Tab = 'cards' | 'disputes' | 'strikes' | 'notifications' | 'refunds' | 'couriers'
 
 /** Plays a protected evidence video: it is fetched with the admin's token, then shown from a blob URL. */
 function EvidenceVideo({ url }: { url: string }) {
@@ -152,6 +153,12 @@ export default function AdminPanel() {
           onClick={() => setActiveTab('refunds')}
         >
           Refunds ({refundList.length})
+        </button>
+        <button
+          className={`admin-tab-btn ${activeTab === 'couriers' ? 'tab-btn--active' : ''}`}
+          onClick={() => setActiveTab('couriers')}
+        >
+          Couriers
         </button>
         <button
           className={`admin-tab-btn ${activeTab === 'notifications' ? 'tab-btn--active' : ''}`}
@@ -335,6 +342,8 @@ export default function AdminPanel() {
           </div>
         </div>
       )}
+
+      {activeTab === 'couriers' && <AdminCouriers />}
 
       {activeTab === 'refunds' && (
         <div className="admin-card-section">

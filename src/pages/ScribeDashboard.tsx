@@ -13,6 +13,8 @@ import { useScribePortal } from '../lib/scribeStore'
 import { inr } from '../lib/pricing'
 import Icon from '../components/Icons'
 import { downloadFile } from '../lib/api'
+import ScribePickup from '../components/ScribePickup'
+import CourierGate from '../components/CourierGate'
 
 export default function ScribeDashboard() {
   const { profile, orders, loading, loadError, acceptOrder, startWriting, submitCheckIn, dispatchOrder, confirmDelivery } = useScribePortal()
@@ -235,20 +237,16 @@ export default function ScribeDashboard() {
                             >
                               Send progress update
                             </button>
-                            <button
-                              className="btn btn-primary"
-                              disabled={busyId === order.id}
-                              onClick={() => act(order.id, () => dispatchOrder(order.id))}
-                            >
-                              Finished, send for delivery
-                            </button>
                           </div>
                         )}
+                        <ScribePickup orderId={order.id} busy={busyId === order.id} onAsk={() => act(order.id, () => dispatchOrder(order.id))} />
                       </div>
                     )}
 
                     {order.status === 'Dispatched' && (
                       <div className="dispatched-box">
+                        <ScribePickup orderId={order.id} busy={false} onAsk={() => undefined} />
+                        <CourierGate orderId={order.id}>
                         <p style={{ fontSize: 14 }}>
                           Courier is transporting the package to the campus gate. At handover, the customer reads you the
                           <strong> 6-digit delivery code</strong> shown in their tracker. Enter it to complete delivery.
@@ -273,6 +271,7 @@ export default function ScribeDashboard() {
                           </button>
                         </div>
                         {otpError && <p className="alert alert--warn" role="alert" style={{ marginTop: 8 }}>{otpError}</p>}
+                        </CourierGate>
                       </div>
                     )}
                   </div>

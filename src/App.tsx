@@ -35,6 +35,7 @@ import ScribeEarnings from './pages/ScribeEarnings'
 
 import AdminPanel from './pages/AdminPanel'
 import DisputeFiling from './pages/DisputeFiling'
+import RiderPage from './pages/RiderPage'
 
 import './App.css'
 import './order.css'
@@ -181,6 +182,8 @@ export default function App() {
           <Route index element={<DisputeFiling />} />
           <Route path=":orderId" element={<DisputeFiling />} />
         </Route>
+
+        <Route path="/rider/:token" element={<RiderPage />} />
 
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

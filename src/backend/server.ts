@@ -31,6 +31,8 @@ import {
 import { createDb, type Db, type Queryable } from './db'
 import { createUpiPaymentIntent, type UpiPaymentIntent } from './paymentGateway'
 import * as addr from './addresses'
+import * as courier from './courier'
+import type { CourierTask } from '../shared/logisticsDisputes'
 import * as files from './files'
 import { renderInvoice, sellerFromEnv } from './invoice'
 import * as rzp from './razorpay'
@@ -375,6 +377,7 @@ export function createApp(db: Db) {
   const activeOtps = new Map<string, { otp: string; expiresAt: number }>()
   const otpAttempts = new AttemptLimiter(5, FIFTEEN_MIN)
   const deliveryAttempts = new AttemptLimiter(5, FIFTEEN_MIN)
+  const pickupAttempts = new AttemptLimiter(5, FIFTEEN_MIN)
 
   const hops = process.env.TRUST_PROXY
   if (hops) app.set('trust proxy', /^\d+$/.test(hops) ? Number(hops) : hops)
@@ -989,6 +992,28 @@ export function createApp(db: Db) {
       if (!order) throw notFound('Order not found')
       if (s.role === 'scribe' && order.scribeId !== scribeIdFor(s.phone)) throw forbid('Only the assigned scribe can dispatch')
 
+      if (courier.courierProvider() === 'manual') {
+        if (b.packed !== true) throw new ValidationError('Confirm the pages are packed before asking for a pickup')
+        if (order.status !== 'Writing') throw new HttpError(409, 'Only an order being written can be sent for pickup')
+        const existing = await courier.getTask(q, orderId)
+        if (existing && ['BOOKING_REQUESTED', 'RIDER_ASSIGNED', 'PICKED_UP'].includes(existing.status)) return { task: courier.scribeView(existing), order: publicOrder(order, s) }
+        const owner = s.role === 'scribe' ? s.phone : order.scribeId ? (await logi.getScribe(q, order.scribeId))?.phone : undefined
+        const from = owner ? (await addr.listAddresses(q, owner, 'pickup'))[0] : undefined
+        if (!from) throw new ValidationError('The scribe needs a pickup address in their profile first')
+        const task = await courier.requestPickup(q, {
+          orderId,
+          pickupAddress: addr.addressLine(from),
+          dropGate: order.dropGate ? addr.addressLine(order.dropGate) : 'Gate not set',
+          deliveryOtp: order.deliveryOtp,
+          pickupContact: { name: from.contactName, phone: from.contactPhone },
+          dropContact: order.dropGate ? { name: order.dropGate.contactName, phone: order.dropGate.contactPhone } : undefined,
+        })
+        // The pages are written, so the hourly check-in clock stops. The scribe is now waiting for a rider.
+        await sched.closeRushWatch(q, order.id)
+        await sched.audit(q, `[COURIER] Pickup requested for ${orderId}. Waiting for a rider to be booked.`)
+        return { task: courier.scribeView(task), order: publicOrder(order, s) }
+      }
+
       const scribePhone = s.role === 'scribe' ? s.phone : order.scribeId ? (await logi.getScribe(q, order.scribeId))?.phone : undefined
       const saved = scribePhone ? (await addr.listAddresses(q, scribePhone, 'pickup'))[0] : undefined
       const task = await logi.createCourierDispatch(
@@ -1021,6 +1046,7 @@ export function createApp(db: Db) {
 
     const out = await db.tx(async (q) => {
       const order = await loadVisible(q, orderId, s, true)
+      if (courier.courierProvider() === 'manual' && s.role !== 'admin') throw forbid('The rider confirms delivery with the code. Give the code to the rider at the gate.')
       if (s.role === 'scribe' && order.scribeId !== scribeIdFor(s.phone)) throw forbid('Only the assigned scribe can confirm delivery')
 
       const result = await logi.confirmGateDelivery(q, orderId, otp, photo, order.customerPhone)
@@ -1038,6 +1064,110 @@ export function createApp(db: Db) {
     }
     deliveryAttempts.clear(orderId)
     return res.json({ success: true, task: out.task, order: out.order })
+  })
+
+  const riderLink = (token: string) => {
+    const base = process.env.PUBLIC_APP_URL ?? (process.env.CORS_ORIGINS ?? '').split(',')[0]?.trim() ?? ''
+    return `${(base || 'http://localhost:5173').replace(/\/$/, '')}/rider/${token}`
+  }
+
+  /** What each kind of signed-in user may know about the courier for an order. */
+  app.get('/api/orders/:id/courier', requireAuth(), async (req, res) => {
+    const s = sessionOf(res)
+    const order = await loadVisible(db, idLike(req.params.id, 'order id'), s)
+    const t = await courier.getTask(db, order.id)
+    if (!t) return res.json({ success: true, courier: null })
+    return res.json({ success: true, courier: s.role === 'scribe' ? courier.scribeView(t) : courier.customerView(t) })
+  })
+
+  app.get('/api/admin/courier', requireAuth('admin'), async (_req, res) => {
+    const rows = await db.query<{ task: CourierTask }>(`SELECT task FROM courier_tasks WHERE task->>'status' IN ('BOOKING_REQUESTED','RIDER_ASSIGNED','PICKED_UP') ORDER BY task->>'createdAt'`)
+    res.json({
+      success: true,
+      tasks: rows.map(({ task: t }) => ({
+        orderId: t.orderId, status: t.status, pickupAddress: t.pickupAddress, dropGate: t.dropGate, pickupContact: t.pickupContact, dropContact: t.dropContact,
+        riderName: t.courierRiderName, riderPhone: t.courierRiderPhone, trackingUrl: t.trackingUrl, attempts: t.attempts ?? 1,
+        needsAttention: (t.attempts ?? 1) > courier.MAX_ATTEMPTS, history: t.history ?? [],
+        riderLink: t.riderToken ? riderLink(t.riderToken) : undefined,
+      })),
+    })
+  })
+
+  app.post('/api/admin/courier/:orderId/assign', requireAuth('admin'), async (req, res) => {
+    const b = bodyOf(req)
+    const orderId = idLike(req.params.orderId, 'orderId')
+    const out = await db.tx(async (q) => {
+      const order = await fetchOrder(q, orderId, true)
+      if (!order) throw notFound('Order not found')
+      const rider = {
+        name: str(b.riderName, 'riderName', { max: 60 }),
+        phone: phone(b.riderPhone, 'riderPhone'),
+        trackingUrl: optStr(b.trackingUrl, 'trackingUrl', 300),
+        trackingId: optStr(b.trackingId, 'trackingId', 60),
+      }
+      let t: CourierTask
+      try { t = await courier.assignRider(q, orderId, rider) } catch (e) { throw new HttpError(409, (e as Error).message) }
+      if (order.customerPhone) await logi.sendNotification(q, order.customerPhone, 'WHATSAPP', 'RIDER_ASSIGNED', `ScribeLink: ${t.courierRiderName} will collect your notes from the scribe.${t.trackingUrl ? ` Track: ${t.trackingUrl}` : ''}`)
+      await sched.audit(q, `[COURIER] Rider ${t.courierRiderName} assigned to ${orderId}.`)
+      return { riderLink: riderLink(t.riderToken!), whatsapp: `https://wa.me/${t.courierRiderPhone.replace(/\D/g, '')}?text=${encodeURIComponent(`ScribeLink parcel ${orderId}. Open this link at pickup and delivery: ${riderLink(t.riderToken!)}`)}` }
+    })
+    res.json({ success: true, ...out })
+  })
+
+  app.post('/api/admin/courier/:orderId/rebook', requireAuth('admin'), async (req, res) => {
+    const orderId = idLike(req.params.orderId, 'orderId')
+    const reason = str(bodyOf(req).reason, 'reason', { max: 200 })
+    const out = await db.tx(async (q) => {
+      let r
+      try { r = await courier.rebook(q, orderId, reason) } catch (e) { throw new HttpError(409, (e as Error).message) }
+      await sched.audit(q, `[COURIER] Rebooking ${orderId} (attempt ${r.task.attempts}): ${reason}${r.needsAttention ? '. NEEDS ATTENTION: three riders have failed.' : ''}`)
+      return { attempts: r.task.attempts, needsAttention: r.needsAttention }
+    })
+    res.json({ success: true, ...out })
+  })
+
+  // The rider has no account. Their private link is the key, so these routes are rate limited.
+  app.get('/api/rider/:token', sensitiveLimit, async (req, res) => {
+    const t = await courier.getTaskByToken(db, str(req.params.token, 'token', { max: 60 }))
+    if (!t) throw notFound('This link is not valid any more')
+    res.json({ success: true, task: courier.riderView(t) })
+  })
+
+  app.post('/api/rider/:token/pickup', sensitiveLimit, async (req, res) => {
+    const code = str(bodyOf(req).pickupOtp, 'pickupOtp', { min: 4, max: 8 })
+    const out = await db.tx(async (q) => {
+      const t = await courier.getTaskByToken(q, str(req.params.token, 'token', { max: 60 }))
+      if (!t) throw notFound('This link is not valid any more')
+      if (pickupAttempts.lockedForMs(t.orderId) > 0) return { error: 'Too many wrong codes. Try again in 15 minutes.', status: 429 }
+      const r = await courier.confirmPickup(q, t, code)
+      if (!r.ok) { pickupAttempts.fail(t.orderId); return { error: r.error!, status: 400 } }
+      pickupAttempts.clear(t.orderId)
+      const order = await fetchOrder(q, t.orderId, true)
+      if (order?.status === 'Writing') await applyTransition(q, order, 'Dispatched', `Picked up by ${t.courierRiderName}.`)
+      if (order?.customerPhone) await logi.sendNotification(q, order.customerPhone, 'WHATSAPP', 'COURIER_DISPATCHED', `ScribeLink: ${t.courierRiderName} has your notes and is heading to ${t.dropGate}. When they arrive, read out your delivery code ${order.deliveryOtp}.`)
+      return { ok: true as const, task: courier.riderView(t) }
+    })
+    if ('error' in out) return res.status((out as { status: number }).status).json({ error: out.error })
+    return res.json({ success: true, task: out.task })
+  })
+
+  app.post('/api/rider/:token/deliver', sensitiveLimit, async (req, res) => {
+    const code = str(bodyOf(req).deliveryOtp, 'deliveryOtp', { min: 4, max: 8 })
+    const out = await db.tx(async (q) => {
+      const t = await courier.getTaskByToken(q, str(req.params.token, 'token', { max: 60 }))
+      if (!t) throw notFound('This link is not valid any more')
+      if (t.status !== 'PICKED_UP') return { error: 'Collect the parcel from the scribe first', status: 409 }
+      if (deliveryAttempts.lockedForMs(t.orderId) > 0) return { error: 'Too many wrong codes. Try again in 15 minutes.', status: 429 }
+      const order = await fetchOrder(q, t.orderId, true)
+      if (!order) throw notFound('Order not found')
+      const r = await logi.confirmGateDelivery(q, t.orderId, code, undefined, order.customerPhone)
+      if (!r.success) { deliveryAttempts.fail(t.orderId); return { error: 'That code is not right. Ask the person at the gate to read it from their phone.', status: 400 } }
+      deliveryAttempts.clear(t.orderId)
+      if (order.status === 'Dispatched' && order.scribeId) await applyTransition(q, order, 'Delivered', 'Delivery code confirmed at the gate.')
+      return { ok: true as const }
+    })
+    if ('error' in out) return res.status((out as { status: number }).status).json({ error: out.error })
+    return res.json({ success: true })
   })
 
   // ── 8. Disputes and admin ──────────────────────────────────────────────────

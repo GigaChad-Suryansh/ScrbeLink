@@ -30,3 +30,7 @@ The web app (Vite build) and the API (Express, run with `tsx`) deploy separately
 5. Place one test payment and one cancellation, and check the refund shows as sent after Razorpay's webhook arrives.
 
 The front end loads Razorpay's checkout from `checkout.razorpay.com`. `vercel.json` already allows it. If the API is on a different domain from the site, also add that domain to `connect-src` in `vercel.json`.
+
+## Courier (Porter) in production
+
+Set `COURIER_PROVIDER=manual` and `PUBLIC_APP_URL` to your site address. When a scribe taps "Finished, ask for a pickup", the order appears in Admin, Couriers. Book a Porter by hand, type the rider's name and phone there, and send them the private link (a WhatsApp button is provided). The rider opens the link on their phone, types the pickup code the scribe reads out, then the delivery code the recipient reads out. Delivery is confirmed only by that second code.

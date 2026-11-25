@@ -85,7 +85,8 @@ Things a real launch needs that are not on any list yet:
 - GST invoice PDF per order.
 - **Done when:** a test-mode payment, a partial refund and a full refund all show correctly in the customer view, scribe wallet and admin ledger.
 
-### Phase 13: Porter delivery (the "Amazon logistics" part)
+### Phase 13: Porter delivery (the "Amazon logistics" part) (manual version done)
+- Done: scribe packing checklist and pickup request; admin Couriers queue where the admin books Porter by hand and enters the rider; private rider link page with pickup and delivery codes; rebook after a rider fails (admin warned after three); customer and scribe see rider details. Not yet done: Porter API automation (only the assign step needs replacing), live map, alert when no rider is assigned for too long, proof photo.
 - Integrate Porter's business API (or Borzo as a fallback). **Confirm with Porter that API access is available for your account type before building**; if not, build a manual "book Porter" admin tool first and automate later.
 - Booking: when the scribe taps "Finished", create a pickup at the scribe's address and a drop at the customer's gate.
 - **Pickup OTP** read by the scribe to the rider, so the parcel handed over is the right one.

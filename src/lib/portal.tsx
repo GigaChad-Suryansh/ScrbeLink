@@ -155,7 +155,7 @@ export function PortalProvider({ role, children }: { role: Role; children: React
       acceptOrder: (id) => run(() => move(id, 'Accepted', 'Accepted. 30-minute intake window started.')),
       startWriting: (id) => run(() => move(id, 'Writing', '30-minute intake inspection passed. Writing started.')),
       submitCheckIn: (id, note) => run(() => api('POST', `/api/orders/${id}/checkin`, { as: role, body: { note: note || undefined } })),
-      dispatchOrder: (id) => run(() => api('POST', '/api/logistics/dispatch', { as: role, body: { orderId: id } })),
+      dispatchOrder: (id) => run(() => api('POST', '/api/logistics/dispatch', { as: role, body: { orderId: id, packed: true } })),
       confirmDelivery: (id, code) => run(() => api('POST', '/api/logistics/confirm-delivery', { as: role, body: { orderId: id, deliveryOtp: code } })),
       cancelOrder: (id) => run(() => move(id, 'Cancelled')),
       withdraw: () => run(async () => applyMe(await api<ScribeMe>('POST', '/api/scribe/withdraw', { as: 'scribe' }))),
