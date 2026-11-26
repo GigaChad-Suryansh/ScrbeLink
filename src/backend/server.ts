@@ -33,6 +33,7 @@ import { createUpiPaymentIntent, type UpiPaymentIntent } from './paymentGateway'
 import * as addr from './addresses'
 import * as courier from './courier'
 import * as notify from './notify'
+import * as feedback from './feedback'
 import type { CourierTask } from '../shared/logisticsDisputes'
 import * as files from './files'
 import { renderInvoice, sellerFromEnv } from './invoice'
@@ -1265,6 +1266,48 @@ export function createApp(db: Db) {
   app.post('/api/notifications/read', requireAuth('customer', 'scribe'), async (_req, res) => {
     await notify.markAllRead(db, sessionOf(res).phone)
     res.json({ success: true })
+  })
+
+  // ── Ratings and support ───────────────────────────────────────────────────
+
+  app.get('/api/orders/:id/rating', requireAuth('customer'), async (req, res) => {
+    const order = await loadVisible(db, idLike(req.params.id, 'order id'), sessionOf(res))
+    res.json({ success: true, rating: await feedback.ratingOf(db, order.id) })
+  })
+
+  app.post('/api/orders/:id/rating', requireAuth('customer'), async (req, res) => {
+    const b = bodyOf(req)
+    const stars = int(b.stars, 'stars', 1, 5)
+    const comment = optStr(b.comment, 'comment', 500) ?? ''
+    const order = await loadVisible(db, idLike(req.params.id, 'order id'), sessionOf(res))
+    if (order.customerPhone !== sessionOf(res).phone) throw notFound('Order not found')
+    if (!['Delivered', 'Closed'].includes(order.status) || !order.scribeId) throw new HttpError(409, 'You can rate a scribe after the pages are delivered')
+    if (!(await feedback.addRating(db, order.id, order.scribeId, stars, comment))) throw new HttpError(409, 'You have already rated this order')
+    res.json({ success: true })
+  })
+
+  app.post('/api/tickets', requireAuth('customer', 'scribe'), async (req, res) => {
+    const b = bodyOf(req)
+    const s = sessionOf(res)
+    let orderId: string | null = null
+    if (b.orderId) orderId = (await loadVisible(db, idLike(b.orderId, 'order id'), s)).id
+    const t = await feedback.openTicket(db, s.phone, orderId, str(b.subject, 'subject', { min: 3, max: 120 }), str(b.body, 'body', { min: 5, max: 2000 }))
+    res.json({ success: true, ticket: t })
+  })
+
+  app.get('/api/tickets', requireAuth('customer', 'scribe'), async (_req, res) => {
+    res.json({ success: true, tickets: await feedback.ticketsFor(db, sessionOf(res).phone) })
+  })
+
+  app.get('/api/admin/tickets', requireAuth('admin'), async (_req, res) => {
+    res.json({ success: true, tickets: await feedback.allTickets(db), lowRated: await feedback.lowRatedScribes(db) })
+  })
+
+  app.post('/api/admin/tickets/:id/close', requireAuth('admin'), async (req, res) => {
+    const t = await feedback.closeTicket(db, idLike(req.params.id, 'ticket id'), str(bodyOf(req).reply, 'reply', { min: 1, max: 1000 }))
+    if (!t) throw notFound('Ticket not found')
+    await notify.notifyOnce(db, `${t.id}:closed`, t.phone, 'TICKET_CLOSED', `ScribeLink: your ticket ${t.id} was answered: ${t.reply}`)
+    res.json({ success: true, ticket: t })
   })
 
   app.get('/api/admin/notifications', requireAuth('admin'), async (_req, res) => {

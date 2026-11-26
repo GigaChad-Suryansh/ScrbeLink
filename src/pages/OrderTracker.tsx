@@ -6,6 +6,8 @@
 
 import Icon from '../components/Icons'
 import CourierStatus from '../components/CourierStatus'
+import RateScribe from '../components/RateScribe'
+import HelpTicket from '../components/HelpTicket'
 import { CANCELLATION_POLICY, REFUND_REASON_TEXT, customerCanCancel, type RefundReason } from '../shared/refunds'
 import { useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
@@ -102,6 +104,9 @@ export default function OrderTracker() {
       </div>
 
       {['Writing', 'Dispatched'].includes(order.status) && <CourierStatus orderId={order.id} />}
+
+      {['Delivered', 'Closed'].includes(order.status) && order.scribeId && <RateScribe orderId={order.id} />}
+      {order.status !== 'Draft' && <HelpTicket orderId={order.id} role="customer" />}
 
       {order.refund && (
         <div className="card" style={{ padding: 20, marginBottom: 16, borderColor: 'var(--ok)' }} id="refund-card">

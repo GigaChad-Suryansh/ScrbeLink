@@ -184,4 +184,28 @@ export const MIGRATIONS: Migration[] = [
       `CREATE INDEX notifications_recipient_idx ON notifications (recipient, id DESC)`,
     ],
   },
+  {
+    version: 6,
+    sql: [
+      `CREATE TABLE ratings (
+        order_id   text PRIMARY KEY REFERENCES orders(id),
+        scribe_id  text NOT NULL,
+        stars      int NOT NULL CHECK (stars BETWEEN 1 AND 5),
+        comment    text NOT NULL DEFAULT '',
+        created_at timestamptz NOT NULL DEFAULT now()
+      )`,
+      `CREATE INDEX ratings_scribe_idx ON ratings (scribe_id)`,
+      `CREATE TABLE tickets (
+        id         text PRIMARY KEY,
+        order_id   text REFERENCES orders(id),
+        phone      text NOT NULL,
+        subject    text NOT NULL,
+        body       text NOT NULL,
+        status     text NOT NULL DEFAULT 'OPEN',
+        reply      text NOT NULL DEFAULT '',
+        created_at timestamptz NOT NULL DEFAULT now()
+      )`,
+      `CREATE INDEX tickets_phone_idx ON tickets (phone)`,
+    ],
+  },
 ]

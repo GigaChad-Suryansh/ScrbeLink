@@ -104,7 +104,8 @@ Things a real launch needs that are not on any list yet:
 - User settings: which channels to use.
 - **Done when:** each event above sends exactly one message and failures retry without duplicates.
 
-### Phase 15: Ratings, support and trust
+### Phase 15: Ratings, support and trust (core done)
+- Done: customers rate a scribe once per delivered order (1 to 5 stars, optional comment); admin sees scribes whose average is under 3.5 after 5 ratings; support tickets per order with an admin inbox where the answer is sent back as a message. Not yet done: showing the rating on the scribe card in the scribe picker, a stand-alone help page and FAQ, reporting a scribe or a customer, rating categories (handwriting, neatness, timeliness).
 - Customer rates the scribe after the dispute window (handwriting, neatness, timeliness) with an optional comment.
 - Scribe profile shows rating and completed orders; low-rated scribes are flagged to admin.
 - Help centre page, FAQ, and a support ticket linked to an order. Admin inbox to answer tickets.

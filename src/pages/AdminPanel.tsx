@@ -13,8 +13,9 @@ import type { AdminScribeApproval, DisputeRecord, NotificationLog } from '../sha
 import { api, fetchBlobUrl } from '../lib/api'
 import { inr } from '../lib/pricing'
 import AdminCouriers from '../components/AdminCouriers'
+import AdminTickets from '../components/AdminTickets'
 
-type Tab = 'cards' | 'disputes' | 'strikes' | 'notifications' | 'refunds' | 'couriers'
+type Tab = 'cards' | 'disputes' | 'strikes' | 'notifications' | 'refunds' | 'couriers' | 'tickets'
 
 /** Plays a protected evidence video: it is fetched with the admin's token, then shown from a blob URL. */
 function EvidenceVideo({ url }: { url: string }) {
@@ -159,6 +160,12 @@ export default function AdminPanel() {
           onClick={() => setActiveTab('couriers')}
         >
           Couriers
+        </button>
+        <button
+          className={`admin-tab-btn ${activeTab === 'tickets' ? 'tab-btn--active' : ''}`}
+          onClick={() => setActiveTab('tickets')}
+        >
+          Support
         </button>
         <button
           className={`admin-tab-btn ${activeTab === 'notifications' ? 'tab-btn--active' : ''}`}
@@ -344,6 +351,7 @@ export default function AdminPanel() {
       )}
 
       {activeTab === 'couriers' && <AdminCouriers />}
+      {activeTab === 'tickets' && <AdminTickets />}
 
       {activeTab === 'refunds' && (
         <div className="admin-card-section">
