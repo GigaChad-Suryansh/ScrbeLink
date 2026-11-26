@@ -208,4 +208,35 @@ export const MIGRATIONS: Migration[] = [
       `CREATE INDEX tickets_phone_idx ON tickets (phone)`,
     ],
   },
+  {
+    // Phase 16: scribe verification documents, PAN (encrypted), capacity, payout tracking.
+    version: 7,
+    sql: [
+      `ALTER TABLE scribes
+        ADD COLUMN pan_encrypted    text,
+        ADD COLUMN pan_last4        text,
+        ADD COLUMN college_id_url   text,
+        ADD COLUMN selfie_url       text,
+        ADD COLUMN id_verified      boolean NOT NULL DEFAULT false,
+        ADD COLUMN max_pages_today  int NOT NULL DEFAULT 100,
+        ADD COLUMN on_vacation      boolean NOT NULL DEFAULT false`,
+
+      `ALTER TABLE withdrawals
+        ADD COLUMN provider         text NOT NULL DEFAULT 'simulated',
+        ADD COLUMN provider_ref     text,
+        ADD COLUMN status           text NOT NULL DEFAULT 'processed',
+        ADD COLUMN tds_amount       numeric(10,2) NOT NULL DEFAULT 0,
+        ADD COLUMN failure_reason   text`,
+
+      `CREATE TABLE tds_records (
+        id           bigserial PRIMARY KEY,
+        scribe_id    text NOT NULL,
+        fy           text NOT NULL,
+        gross_paid   numeric(10,2) NOT NULL DEFAULT 0,
+        tds_deducted numeric(10,2) NOT NULL DEFAULT 0,
+        updated_at   timestamptz NOT NULL DEFAULT now(),
+        UNIQUE (scribe_id, fy)
+      )`,
+    ],
+  },
 ]

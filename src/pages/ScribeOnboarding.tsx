@@ -15,6 +15,127 @@ import { useScribePortal } from '../lib/scribeStore'
 import { checkFile, uploadHint } from '../lib/checkUpload'
 import PickupCard from '../components/PickupCard'
 
+/** Phase 16: PAN and ID verification panel */
+function VerificationPanel() {
+  const [pan, setPan] = useState('')
+  const [collegeIdUrl, setCollegeIdUrl] = useState('')
+  const [selfieUrl, setSelfieUrl] = useState('')
+  const [panLast4, setPanLast4] = useState('')
+  const [uploading, setUploading] = useState<'college' | 'selfie' | null>(null)
+  const [err, setErr] = useState('')
+  const [saved, setSaved] = useState(false)
+  const [saving, setSaving] = useState(false)
+
+  async function uploadMedia(file: File, type: 'college' | 'selfie') {
+    setUploading(type); setErr('')
+    try {
+      const r = await api<{ url: string }>('POST', '/api/uploads/sample', {
+        as: 'scribe', raw: file, headers: { 'x-file-name': encodeURIComponent(file.name) },
+      })
+      if (type === 'college') setCollegeIdUrl(r.url)
+      else setSelfieUrl(r.url)
+    } catch (e) { setErr((e as Error).message) }
+    finally { setUploading(null) }
+  }
+
+  async function handleSave(e: React.FormEvent) {
+    e.preventDefault()
+    if (!collegeIdUrl || !selfieUrl) { setErr('Upload both your college ID and a selfie first'); return }
+    setSaving(true); setErr('')
+    try {
+      const r = await api<{ panLast4: string }>('PUT', '/api/scribe/verification', {
+        as: 'scribe', body: { pan, collegeIdUrl, selfieUrl },
+      })
+      setPanLast4(r.panLast4)
+      setSaved(true)
+    } catch (e) { setErr((e as Error).message) }
+    finally { setSaving(false) }
+  }
+
+  return (
+    <div className="card form-column" style={{ marginTop: 24 }}>
+      <h3 className="form-section-title">5. Identity verification (Phase 16)</h3>
+      <p style={{ fontSize: 13, color: 'var(--muted)', marginBottom: 14 }}>
+        Required before real payouts. Your PAN is stored encrypted; only the last 4 digits are visible after saving.
+        An admin will verify your documents before marking you as ID-verified.
+      </p>
+
+      {saved && (
+        <div className="alert alert--ok" style={{ marginBottom: 14 }}>
+          Verification documents submitted. PAN ending in <strong>…{panLast4}</strong> recorded.
+          An admin will review shortly.
+        </div>
+      )}
+
+      <form onSubmit={handleSave}>
+        <div className="field">
+          <label htmlFor="pan-input">PAN (e.g. ABCDE1234F)</label>
+          <input
+            id="pan-input"
+            type="text"
+            maxLength={10}
+            required
+            value={pan}
+            onChange={e => setPan(e.target.value.toUpperCase())}
+            placeholder="ABCDE1234F"
+            autoComplete="off"
+          />
+        </div>
+
+        <div className="field" style={{ marginTop: 14 }}>
+          <label>College ID photo</label>
+          <div
+            className="sample-upload-zone"
+            style={{ cursor: 'pointer' }}
+            onClick={() => document.getElementById('college-id-input')?.click()}
+          >
+            <input id="college-id-input" type="file" accept=".jpg,.jpeg,.png,.webp" style={{ display: 'none' }}
+              onChange={e => { const f = e.target.files?.[0]; if (f) uploadMedia(f, 'college') }} />
+            {collegeIdUrl
+              ? <img src={collegeIdUrl} alt="College ID" style={{ maxHeight: 100, borderRadius: 8 }} />
+              : <span style={{ color: 'var(--muted)' }}><Icon name="camera" size={24} /></span>}
+            <p style={{ fontWeight: 600, margin: '4px 0 2px' }}>
+              {uploading === 'college' ? 'Uploading…' : collegeIdUrl ? 'ID uploaded' : 'Upload college ID'}
+            </p>
+            <span style={{ fontSize: 12, color: 'var(--muted)' }}>{uploadHint('image')}</span>
+          </div>
+        </div>
+
+        <div className="field" style={{ marginTop: 14 }}>
+          <label>Selfie</label>
+          <div
+            className="sample-upload-zone"
+            style={{ cursor: 'pointer' }}
+            onClick={() => document.getElementById('selfie-input')?.click()}
+          >
+            <input id="selfie-input" type="file" accept=".jpg,.jpeg,.png,.webp" style={{ display: 'none' }}
+              onChange={e => { const f = e.target.files?.[0]; if (f) uploadMedia(f, 'selfie') }} />
+            {selfieUrl
+              ? <img src={selfieUrl} alt="Selfie" style={{ maxHeight: 100, borderRadius: 8 }} />
+              : <span style={{ color: 'var(--muted)' }}><Icon name="camera" size={24} /></span>}
+            <p style={{ fontWeight: 600, margin: '4px 0 2px' }}>
+              {uploading === 'selfie' ? 'Uploading…' : selfieUrl ? 'Selfie uploaded' : 'Upload a selfie'}
+            </p>
+            <span style={{ fontSize: 12, color: 'var(--muted)' }}>{uploadHint('image')}</span>
+          </div>
+        </div>
+
+        {err && <p role="alert" style={{ color: 'var(--warn)', fontSize: 13, marginTop: 8 }}>{err}</p>}
+
+        <button
+          type="submit"
+          className="btn btn-primary full"
+          style={{ marginTop: 16 }}
+          disabled={saving || !!uploading}
+        >
+          {saving ? 'Saving…' : 'Submit for ID verification'}
+        </button>
+      </form>
+      <VerificationPanel />
+    </div>
+  )
+}
+
 const SUBJECT_OPTIONS = [
   'Engineering & Tech',
   'Mathematics & Calculus',
@@ -237,6 +358,7 @@ function OnboardingForm() {
           </div>
         </div>
       </form>
+      <VerificationPanel />
     </div>
   )
 }

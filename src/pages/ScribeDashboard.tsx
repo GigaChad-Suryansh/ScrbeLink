@@ -12,9 +12,64 @@ import { Link } from 'react-router-dom'
 import { useScribePortal } from '../lib/scribeStore'
 import { inr } from '../lib/pricing'
 import Icon from '../components/Icons'
-import { downloadFile } from '../lib/api'
+import { api, downloadFile } from '../lib/api'
 import ScribePickup from '../components/ScribePickup'
 import CourierGate from '../components/CourierGate'
+
+function CapacityControls() {
+  const { profile } = useScribePortal()
+  const [maxPages, setMaxPages] = useState(100)
+  const [onVacation, setOnVacation] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
+  const [err, setErr] = useState('')
+
+  async function save() {
+    setSaving(true); setErr(''); setSaved(false)
+    try {
+      await api('PUT', '/api/scribe/capacity', { as: 'scribe', body: { maxPagesToday: maxPages, onVacation } })
+      setSaved(true)
+      setTimeout(() => setSaved(false), 3000)
+    } catch (e) { setErr((e as Error).message) }
+    finally { setSaving(false) }
+  }
+
+  if (!profile.isApproved) return null
+  return (
+    <div className="card capacity-card" style={{ marginTop: 20 }}>
+      <h3>Availability</h3>
+      <p style={{ fontSize: 13, color: 'var(--muted)', marginBottom: 12 }}>
+        Set how many pages you can take today, or switch to vacation mode to pause new orders.
+      </p>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+        <input
+          type="checkbox"
+          checked={onVacation}
+          onChange={e => setOnVacation(e.target.checked)}
+        />
+        <span>Vacation mode — pause all incoming orders</span>
+      </label>
+      {!onVacation && (
+        <div className="field" style={{ maxWidth: 220 }}>
+          <label htmlFor="max-pages">Max pages today</label>
+          <input
+            id="max-pages"
+            type="number"
+            min={0}
+            max={500}
+            value={maxPages}
+            onChange={e => setMaxPages(Number(e.target.value))}
+          />
+        </div>
+      )}
+      <button className="btn btn-ghost" style={{ marginTop: 10 }} disabled={saving} onClick={save}>
+        {saving ? 'Saving…' : 'Save availability'}
+      </button>
+      {saved && <span style={{ marginLeft: 10, color: 'var(--ok)', fontSize: 13 }}>Saved</span>}
+      {err && <p style={{ color: 'var(--warn)', fontSize: 13, marginTop: 6 }}>{err}</p>}
+    </div>
+  )
+}
 
 export default function ScribeDashboard() {
   const { profile, orders, loading, loadError, acceptOrder, startWriting, submitCheckIn, dispatchOrder, confirmDelivery } = useScribePortal()
@@ -347,6 +402,7 @@ export default function ScribeDashboard() {
               </div>
             </div>
           </div>
+          <CapacityControls />
         </div>
       </div>
     </div>

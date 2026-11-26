@@ -43,6 +43,10 @@ import { REFUND_POLICY, customerCanCancel, type RefundReason } from '../shared/r
 import * as sched from './scheduler'
 import * as logi from './logisticsService'
 import {
+  calcTds, encryptPan, panLast4, recordTds, validatePan, ytdGross,
+  issuePayout, monthlyStatement, razorpayXConfig,
+} from './payouts'
+import {
   AttemptLimiter,
   adminPhones,
   assertProductionConfig,
@@ -819,7 +823,9 @@ export function createApp(db: Db) {
   app.post('/api/scribe/withdraw', sensitiveLimit, requireAuth('scribe'), async (_req, res) => {
     const s = sessionOf(res)
     const id = scribeIdFor(s.phone)
-    const out = await db.tx(async (q) => {
+    const xCfg = razorpayXConfig()
+
+    const { withdrawn, tdsAmount } = await db.tx(async (q) => {
       // Lock the scribe's row so two withdrawals at once cannot both take the same balance.
       await q.query('SELECT 1 FROM scribes WHERE scribe_id = $1 FOR UPDATE', [id])
       const rec = await logi.getScribe(q, id)
@@ -827,11 +833,82 @@ export function createApp(db: Db) {
       if (rec.isSuspended) throw forbid('Your account is suspended')
       const { walletBalance } = await walletOf(q, id)
       if (walletBalance <= 0) throw new HttpError(400, 'Nothing to withdraw yet')
-      // No payout provider is connected: this records the transfer so balances stay correct.
-      await q.query('INSERT INTO withdrawals (id, scribe_id, amount, upi_vpa) VALUES ($1,$2,$3,$4)', [`TX-${randomDigits(6)}`, id, walletBalance, rec.upiVpa])
-      return walletBalance
+
+      const prevYtd = await ytdGross(q, id)
+      const { grossAmount, tdsAmount, netAmount } = calcTds(walletBalance, prevYtd)
+      const txId = `TX-${randomDigits(6)}`
+      const result = await issuePayout(xCfg, id, rec.name, s.phone, rec.upiVpa, netAmount, txId)
+
+      await q.query(
+        `INSERT INTO withdrawals (id, scribe_id, amount, upi_vpa, provider, provider_ref, status, tds_amount, failure_reason)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+        [txId, id, grossAmount, rec.upiVpa, result.provider, result.providerRef ?? null, result.status, tdsAmount, result.failureReason ?? null],
+      )
+      await recordTds(q, id, grossAmount, tdsAmount)
+
+      return { withdrawn: grossAmount, tdsAmount }
     })
-    res.json({ success: true, withdrawn: out, ...(await scribeView(db, s.phone)) })
+
+    return res.json({ success: true, withdrawn, tdsDeducted: tdsAmount, ...(await scribeView(db, s.phone)) })
+  })
+
+  // Phase 16: capacity controls — daily page limit and vacation switch
+  app.put('/api/scribe/capacity', requireAuth('scribe'), async (req, res) => {
+    const s = sessionOf(res)
+    const id = scribeIdFor(s.phone)
+    const b = bodyOf(req)
+    const maxPages = int(b.maxPagesToday ?? 100, 'maxPagesToday', 0, 500)
+    const onVacation = typeof b.onVacation === 'boolean' ? b.onVacation : false
+    await db.query(
+      'UPDATE scribes SET max_pages_today=$1, on_vacation=$2 WHERE scribe_id=$3',
+      [maxPages, onVacation, id],
+    )
+    return res.json({ success: true, maxPagesToday: maxPages, onVacation })
+  })
+
+  // Phase 16: save encrypted PAN + verification document URLs
+  app.put('/api/scribe/verification', sensitiveLimit, requireAuth('scribe'), async (req, res) => {
+    const s = sessionOf(res)
+    const id = scribeIdFor(s.phone)
+    const b = bodyOf(req)
+    const panPlain = str(b.pan, 'pan', { max: 10 }).trim().toUpperCase()
+    if (!validatePan(panPlain)) throw new ValidationError('pan must be a valid Indian PAN (e.g. ABCDE1234F)')
+    const rawCollegeId = str(b.collegeIdUrl, 'collegeIdUrl', { max: 500 })
+    const rawSelfie = str(b.selfieUrl, 'selfieUrl', { max: 500 })
+    const collegeIdUrl = rawCollegeId.startsWith('/api/') ? rawCollegeId : mediaUrl(rawCollegeId, 'collegeIdUrl')
+    const selfieUrl = rawSelfie.startsWith('/api/') ? rawSelfie : mediaUrl(rawSelfie, 'selfieUrl')
+
+    let panEncrypted: string
+    try {
+      panEncrypted = encryptPan(panPlain)
+    } catch {
+      throw new HttpError(500, 'PAN encryption is not configured on this server')
+    }
+
+    await db.query(
+      `UPDATE scribes SET pan_encrypted=$1, pan_last4=$2, college_id_url=$3, selfie_url=$4, id_verified=false
+       WHERE scribe_id=$5`,
+      [panEncrypted, panLast4(panPlain), collegeIdUrl, selfieUrl, id],
+    )
+    return res.json({ success: true, panLast4: panLast4(panPlain), idVerified: false })
+  })
+
+  // Phase 16: monthly earnings statement
+  app.get('/api/scribe/statement', requireAuth('scribe'), async (_req, res) => {
+    const s = sessionOf(res)
+    const id = scribeIdFor(s.phone)
+    const statement = await monthlyStatement(db, id)
+    return res.json({ success: true, statement })
+  })
+
+  // Phase 16: admin — verify scribe ID documents (college ID + selfie + PAN)
+  app.post('/api/admin/scribes/:id/verify-id', requireAuth('admin'), async (req, res) => {
+    const id = idLike(req.params.id, 'scribe id')
+    const approved = bool(bodyOf(req).idVerified, 'idVerified')
+    const scribe = await logi.getScribe(db, id)
+    if (!scribe) throw notFound('Scribe not found')
+    await db.query('UPDATE scribes SET id_verified=$1 WHERE scribe_id=$2', [approved, id])
+    return res.json({ success: true, scribeId: id, idVerified: approved })
   })
 
   // ── 5b. Saved places ───────────────────────────────────────────────────────

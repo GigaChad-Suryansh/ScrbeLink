@@ -2,14 +2,78 @@
  * ScribeEarnings.tsx
  * Earnings and Payout View for Scribes:
  * - Wallet balance, Pending escrow, Lifetime earnings
- * - Instant UPI payout withdrawal simulator
+ * - Instant UPI payout withdrawal (Phase 16: RazorpayX or simulated)
  * - Payout audit log & transaction history (escrow states)
+ * - Monthly earnings statement with TDS summary (Phase 16)
  */
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useScribePortal } from '../lib/scribeStore'
 import { inr } from '../lib/pricing'
+import { api } from '../lib/api'
+
+interface MonthStatement {
+  month: string
+  grossPaid: number
+  tdsDeducted: number
+  netPaid: number
+  transactionCount: number
+}
+
+function MonthlyStatement() {
+  const [rows, setRows] = useState<MonthStatement[]>([])
+  const [loading, setLoading] = useState(true)
+  const [err, setErr] = useState('')
+
+  useEffect(() => {
+    api<{ statement: MonthStatement[] }>('GET', '/api/scribe/statement', { as: 'scribe' })
+      .then(r => setRows(r.statement))
+      .catch(e => setErr((e as Error).message))
+      .finally(() => setLoading(false))
+  }, [])
+
+  if (loading) return <p style={{ color: 'var(--muted)', fontSize: 13 }}>Loading statement…</p>
+  if (err) return <p role="alert" style={{ color: 'var(--warn)', fontSize: 13 }}>{err}</p>
+
+  return (
+    <div className="card payouts-table-card" style={{ marginTop: 28 }}>
+      <div className="table-header"><h3>Monthly statement</h3></div>
+      {rows.length === 0 ? (
+        <p style={{ color: 'var(--muted)', padding: '16px 0', fontSize: 13 }}>No completed payouts yet.</p>
+      ) : (
+        <div className="table-responsive">
+          <table className="payout-table">
+            <thead>
+              <tr>
+                <th>Month</th>
+                <th>Gross paid</th>
+                <th>TDS deducted</th>
+                <th>Net received</th>
+                <th>Transactions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map(r => (
+                <tr key={r.month}>
+                  <td><strong>{r.month}</strong></td>
+                  <td>{inr(r.grossPaid)}</td>
+                  <td style={{ color: 'var(--warn)' }}>{r.tdsDeducted > 0 ? `-${inr(r.tdsDeducted)}` : '—'}</td>
+                  <td><strong>{inr(r.netPaid)}</strong></td>
+                  <td style={{ color: 'var(--muted)', fontSize: 13 }}>{r.transactionCount}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <p style={{ fontSize: 12, color: 'var(--muted)', marginTop: 10 }}>
+        TDS at 10% is deducted on payouts above ₹30,000 in a financial year (April–March).
+        A TDS certificate will be provided annually. Confirm with a CA before filing.
+      </p>
+    </div>
+  )
+}
 
 export default function ScribeEarnings() {
   const { profile, payouts, withdraw } = useScribePortal()
@@ -132,6 +196,8 @@ export default function ScribeEarnings() {
           </table>
         </div>
       </div>
+
+      <MonthlyStatement />
     </div>
   )
 }
