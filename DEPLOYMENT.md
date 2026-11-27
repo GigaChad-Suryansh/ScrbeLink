@@ -34,3 +34,14 @@ The front end loads Razorpay's checkout from `checkout.razorpay.com`. `vercel.js
 ## Courier (Porter) in production
 
 Set `COURIER_PROVIDER=manual` and `PUBLIC_APP_URL` to your site address. When a scribe taps "Finished, ask for a pickup", the order appears in Admin, Couriers. Book a Porter by hand, type the rider's name and phone there, and send them the private link (a WhatsApp button is provided). The rider opens the link on their phone, types the pickup code the scribe reads out, then the delivery code the recipient reads out. Delivery is confirmed only by that second code.
+
+## Production reliability (Phase 19)
+
+1. **API + Postgres (Render / Railway / Fly):** Build from `Dockerfile` and set `DATABASE_URL` to your managed PostgreSQL connection string. Migrations run automatically on startup.
+2. **Redis:** Set `REDIS_URL` (`redis://...` or `rediss://...`) so OTP codes work across multiple API instances.
+3. **Object storage (R2 / S3):** Set `S3_ENDPOINT`, `S3_BUCKET`, `S3_REGION`, `S3_ACCESS_KEY_ID`, and `S3_SECRET_ACCESS_KEY` for private uploads with SigV4 signed URLs (`src/backend/s3Store.ts`).
+4. **Monitoring & error tracking:** Set `SENTRY_DSN` for automatic exception reporting (`src/backend/telemetry.ts`). Point an uptime monitor at `GET /api/health`.
+5. **Backups & load testing:**
+   - Daily backup & restore test: `DATABASE_URL=... VERIFY_RESTORE_URL=... node scripts/backup-verify.mjs`
+   - Load test: `BASE_URL=https://your-api node scripts/load-test.mjs`
+   - E2E journey test: `npx playwright test e2e/journey.spec.ts`

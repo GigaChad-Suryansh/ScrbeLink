@@ -45,6 +45,9 @@ import * as sched from './scheduler'
 import * as logi from './logisticsService'
 import * as adminOps from './adminOps'
 import * as legal from './legal'
+import { createOtpStore } from './redisStore'
+import { s3ConfigFromEnv } from './s3Store'
+import { logEvent, reportError } from './telemetry'
 import {
   calcTds, encryptPan, panLast4, recordTds, validatePan, ytdGross,
   issuePayout, monthlyStatement, razorpayXConfig,
@@ -384,7 +387,7 @@ export function createApp(db: Db) {
 
   // OTP codes and lockouts are short-lived and kept in this process. With several API
   // instances, move them to a shared store (see DEPLOYMENT.md).
-  const activeOtps = new Map<string, { otp: string; expiresAt: number }>()
+  const otpStore = createOtpStore()
   const otpAttempts = new AttemptLimiter(5, FIFTEEN_MIN)
   const deliveryAttempts = new AttemptLimiter(5, FIFTEEN_MIN)
   const pickupAttempts = new AttemptLimiter(5, FIFTEEN_MIN)
@@ -435,17 +438,14 @@ export function createApp(db: Db) {
 
   // ── 1. Auth ────────────────────────────────────────────────────────────────
 
-  app.post('/api/auth/otp/send', otpSendLimit, (req, res) => {
+  app.post('/api/auth/otp/send', otpSendLimit, async (req, res) => {
     const ph = phone(bodyOf(req).phone)
     // No SMS provider is wired up yet. Until one is, codes are only issued in demo mode,
     // and are returned in the response. Production must not hand codes to the caller.
     if (!demoOtpEnabled()) return res.status(503).json({ error: 'SMS delivery is not configured' })
 
-    if (activeOtps.size > 5000) {
-      for (const [k, v] of activeOtps) if (v.expiresAt < Date.now()) activeOtps.delete(k)
-    }
     const otp = randomDigits(6)
-    activeOtps.set(ph, { otp, expiresAt: Date.now() + 5 * 60 * 1000 })
+    await otpStore.set(ph, { otp, expiresAt: Date.now() + 5 * 60 * 1000 }, 300)
     return res.json({ success: true, message: `OTP sent to ${ph}.`, expiresInSeconds: 300, devOtp: otp })
   })
 
@@ -460,14 +460,14 @@ export function createApp(db: Db) {
     if (otpAttempts.lockedForMs(ph) > 0) {
       return res.status(429).json({ error: 'Too many wrong codes. Try again in 15 minutes.' })
     }
-    const session = activeOtps.get(ph)
+    const session = await otpStore.get(ph)
     if (!session || Date.now() > session.expiresAt || !safeEqual(session.otp, otp)) {
       otpAttempts.fail(ph)
-      if (otpAttempts.lockedForMs(ph) > 0) activeOtps.delete(ph)
+      if (otpAttempts.lockedForMs(ph) > 0) await otpStore.del(ph)
       return res.status(401).json({ error: 'Invalid or expired OTP' })
     }
 
-    activeOtps.delete(ph)
+    await otpStore.del(ph)
     otpAttempts.clear(ph)
 
     const acceptedVersion = optStr(b.acceptedPolicyVersion, 'acceptedPolicyVersion', 40)
@@ -1546,7 +1546,9 @@ export function createApp(db: Db) {
       status: database === 'ok' ? 'ok' : 'degraded',
       database,
       storage: db.kind,
-      phase: 9,
+      otpStore: otpStore.kind,
+      fileStorage: s3ConfigFromEnv() ? 's3' : 'disk',
+      phase: 19,
       production: isProduction(),
       timestamp: new Date().toISOString(),
     })
@@ -1564,7 +1566,7 @@ export function createApp(db: Db) {
     if (typeof status === 'number' && status >= 400 && status < 500) {
       return res.status(status).json({ error: status === 413 ? 'Request is too large' : 'Invalid request' })
     }
-    console.error('[api] unhandled error', err)
+    void reportError(err)
     return res.status(500).json({ error: 'Internal server error' })
   })
 
@@ -1588,7 +1590,7 @@ async function main() {
   if (process.env.SEED_DEMO === 'true') await logi.seedDemoData(db)
 
   createApp(db).listen(PORT, () => {
-    console.log(`[ScribeLink] API listening on port ${PORT} (${db.kind})`)
+    logEvent('info', 'server_started', { port: PORT, db: db.kind })
   })
   // Escrow and the rush monitor must not depend on someone calling the cron endpoint.
   setInterval(() => {
