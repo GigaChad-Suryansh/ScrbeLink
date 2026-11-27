@@ -164,3 +164,22 @@ export function checkCoverPage(text: string): { score: number; warning: boolean;
   const score = Math.min(matches.length * 0.15, 1)
   return { score, warning: score >= 0.3 || matches.length >= 2, matches }
 }
+
+/** Confidential exam & prohibited material blocklist (Phase 18). */
+const CONFIDENTIAL_KEYWORDS = [
+  'strictly confidential',
+  'confidential exam',
+  'question paper',
+  'answer key',
+  'do not distribute',
+  'end semester examination',
+  'mid semester examination',
+  'internal assessment paper',
+  'leak',
+]
+
+export function checkConfidentialBlocklist(text: string): { blocked: boolean; matches: string[] } {
+  const lower = text.toLowerCase()
+  const matches = CONFIDENTIAL_KEYWORDS.filter((kw) => lower.includes(kw))
+  return { blocked: matches.length > 0, matches }
+}

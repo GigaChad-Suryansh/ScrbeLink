@@ -122,6 +122,16 @@ export function Footer() {
               <li><Link to="/admin">Admin</Link></li>
             </ul>
           </div>
+          <div>
+            <h4>Legal &amp; Safety</h4>
+            <ul>
+              <li><Link to="/legal/terms">Terms of Service</Link></li>
+              <li><Link to="/legal/privacy">Privacy (DPDP Act)</Link></li>
+              <li><Link to="/legal/refunds">Refunds</Link></li>
+              <li><Link to="/legal/integrity">Academic integrity</Link></li>
+              <li><Link to="/legal/contact">Contact</Link></li>
+            </ul>
+          </div>
         </div>
         <div className="footer-note">
           <span>Prototype · demo data only · no real payments</span>

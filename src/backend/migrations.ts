@@ -239,4 +239,30 @@ export const MIGRATIONS: Migration[] = [
       )`,
     ],
   },
+  {
+    // Phase 18: legal acceptance tracking (DPDP Act) and misuse reports.
+    version: 8,
+    sql: [
+      `CREATE TABLE legal_acceptances (
+        phone           text NOT NULL,
+        role            text NOT NULL,
+        policy_version  text NOT NULL,
+        storage_consent boolean NOT NULL DEFAULT false,
+        accepted_at     timestamptz NOT NULL DEFAULT now(),
+        PRIMARY KEY (phone, role, policy_version)
+      )`,
+
+      `CREATE TABLE misuse_reports (
+        id             text PRIMARY KEY,
+        reporter_phone text NOT NULL,
+        target_type    text NOT NULL,
+        target_id      text NOT NULL,
+        reason         text NOT NULL,
+        details        text NOT NULL DEFAULT '',
+        status         text NOT NULL DEFAULT 'OPEN',
+        created_at     timestamptz NOT NULL DEFAULT now()
+      )`,
+      `CREATE INDEX misuse_reports_status_idx ON misuse_reports (status, created_at DESC)`,
+    ],
+  },
 ]

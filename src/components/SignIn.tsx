@@ -4,7 +4,9 @@
  */
 
 import { useState, type ReactNode } from 'react'
+import { Link } from 'react-router-dom'
 import { sendOtp, useSessions, verifyOtp, type Role } from '../lib/api'
+import { POLICY_VERSION } from '../shared/legal'
 
 const COPY: Record<Role, { title: string; sub: string }> = {
   customer: { title: 'Sign in to place and track orders', sub: 'Use your mobile number. No password needed.' },
@@ -19,6 +21,7 @@ export function SignInCard({ role }: { role: Role }) {
   const [demoNote, setDemoNote] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  const [accepted, setAccepted] = useState(false)
   const phone = `+91${digits}`
 
   async function send() {
@@ -43,7 +46,7 @@ export function SignInCard({ role }: { role: Role }) {
     setError('')
     setBusy(true)
     try {
-      await verifyOtp(role, phone, code)
+      await verifyOtp(role, phone, code, { acceptedPolicyVersion: POLICY_VERSION, storageConsent: accepted })
     } catch (e) {
       setError((e as Error).message)
       setBusy(false)
@@ -89,12 +92,21 @@ export function SignInCard({ role }: { role: Role }) {
           </>
         )}
 
+        {sent && (
+          <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginTop: 14, fontSize: 13, color: 'var(--muted)' }}>
+            <input type="checkbox" checked={accepted} onChange={(e) => setAccepted(e.target.checked)} style={{ marginTop: 3 }} />
+            <span>
+              I accept the <Link to="/legal/terms">Terms</Link>, <Link to="/legal/privacy">Privacy Policy</Link>, and <Link to="/legal/integrity">Academic Integrity Policy</Link>, and consent to temporary storage of notes and videos ({POLICY_VERSION}).
+            </span>
+          </label>
+        )}
+
         {error && <p className="alert alert--warn" role="alert" style={{ marginTop: 14 }}>{error}</p>}
 
         <button
           className="btn btn-primary full"
           style={{ marginTop: 18 }}
-          disabled={busy || (sent ? code.length !== 6 : digits.length !== 10)}
+          disabled={busy || (sent ? code.length !== 6 || !accepted : digits.length !== 10)}
           onClick={sent ? verify : send}
           id="signin-submit"
         >

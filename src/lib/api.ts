@@ -128,7 +128,14 @@ export async function sendOtp(phone: string): Promise<{ devOtp?: string }> {
   return api<{ devOtp?: string }>('POST', '/api/auth/otp/send', { body: { phone } })
 }
 
-export async function verifyOtp(role: Role, phone: string, otp: string): Promise<void> {
-  const r = await api<{ token: string }>('POST', '/api/auth/otp/verify', { body: { phone, otp, requestedRole: role } })
+export async function verifyOtp(
+  role: Role,
+  phone: string,
+  otp: string,
+  consent?: { acceptedPolicyVersion: string; storageConsent: boolean },
+): Promise<void> {
+  const r = await api<{ token: string }>('POST', '/api/auth/otp/verify', {
+    body: { phone, otp, requestedRole: role, ...consent },
+  })
   save({ ...sessions, [role]: { token: r.token, phone } })
 }

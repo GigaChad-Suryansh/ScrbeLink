@@ -18,7 +18,8 @@ import express, { type NextFunction, type Request, type Response } from 'express
 import cors from 'cors'
 import helmet from 'helmet'
 import rateLimit from 'express-rate-limit'
-import { MIN_ORDER_MESSAGE, calculateQuote, checkCoverPage, meetsMinimum, countWords, sanitizeText } from '../shared/rules'
+import { MIN_ORDER_MESSAGE, calculateQuote, checkCoverPage, checkConfidentialBlocklist, meetsMinimum, countWords, sanitizeText } from '../shared/rules'
+import { POLICY_VERSION } from '../shared/legal'
 import { validateUpload } from '../shared/upload'
 import {
   ALLOWED_TRANSITIONS,
@@ -43,6 +44,7 @@ import { REFUND_POLICY, customerCanCancel, type RefundReason } from '../shared/r
 import * as sched from './scheduler'
 import * as logi from './logisticsService'
 import * as adminOps from './adminOps'
+import * as legal from './legal'
 import {
   calcTds, encryptPan, panLast4, recordTds, validatePan, ytdGross,
   issuePayout, monthlyStatement, razorpayXConfig,
@@ -447,7 +449,7 @@ export function createApp(db: Db) {
     return res.json({ success: true, message: `OTP sent to ${ph}.`, expiresInSeconds: 300, devOtp: otp })
   })
 
-  app.post('/api/auth/otp/verify', otpVerifyLimit, (req, res) => {
+  app.post('/api/auth/otp/verify', otpVerifyLimit, async (req, res) => {
     const b = bodyOf(req)
     const ph = phone(b.phone)
     const otp = str(b.otp, 'otp', { min: 6, max: 6 })
@@ -467,9 +469,18 @@ export function createApp(db: Db) {
 
     activeOtps.delete(ph)
     otpAttempts.clear(ph)
+
+    const acceptedVersion = optStr(b.acceptedPolicyVersion, 'acceptedPolicyVersion', 40)
+    const storageConsent = typeof b.storageConsent === 'boolean' ? b.storageConsent : false
+    if (acceptedVersion) {
+      await legal.recordAcceptance(db, ph, role, acceptedVersion, storageConsent)
+    }
+
     return res.json({
       success: true,
       token: signSession({ phone: ph, role }),
+      acceptedPolicyVersion: acceptedVersion ?? null,
+      policyVersion: POLICY_VERSION,
       user: { phone: ph, role, ...(role === 'scribe' ? { scribeId: scribeIdFor(ph) } : {}) },
     })
   })
@@ -672,6 +683,9 @@ export function createApp(db: Db) {
     if (!meetsMinimum(words)) throw new ValidationError(MIN_ORDER_MESSAGE)
     const q = calculateQuote({ words, ...extras })
     const title = optStr(b.title, 'title', 120) ?? 'Manuscript Order'
+    if (checkConfidentialBlocklist(title).blocked) {
+      throw new ValidationError('Confidential or exam material is not permitted on ScribeLink')
+    }
     const subject = optStr(b.subject, 'subject', 60) ?? 'General'
     const penStyle = optStr(b.penStyle, 'penStyle', 40) ?? 'Ballpoint · Blue'
     const gateId = optStr(b.gateId, 'gateId', 40)
@@ -1479,6 +1493,45 @@ export function createApp(db: Db) {
     res.setHeader('Content-Type', 'text/csv; charset=utf-8')
     res.setHeader('Content-Disposition', 'attachment; filename="scribelink-accounts.csv"')
     return res.send(csv)
+  })
+
+  // ── Phase 18: Legal acceptance, DPDP data export/erasure, misuse reports ───
+
+  app.get('/api/account/legal', requireAuth(), async (_req, res) => {
+    const s = sessionOf(res)
+    const acceptance = await legal.getLatestAcceptance(db, s.phone, s.role)
+    res.json({ success: true, policyVersion: POLICY_VERSION, acceptance })
+  })
+
+  app.get('/api/account/data-export', requireAuth(), async (_req, res) => {
+    const s = sessionOf(res)
+    const data = await legal.exportUserData(db, s.phone)
+    res.json({ success: true, data })
+  })
+
+  app.delete('/api/account/data', sensitiveLimit, requireAuth(), async (_req, res) => {
+    const s = sessionOf(res)
+    const result = await db.tx(async (q) => {
+      const r = await legal.deleteUserData(q, s.phone)
+      await sched.audit(q, `[DPDP] User ${s.phone} requested data deletion (${r.anonymizedOrders} orders anonymized, ${r.deletedAddresses} addresses deleted).`)
+      return r
+    })
+    res.json({ success: true, ...result })
+  })
+
+  app.post('/api/reports', sensitiveLimit, requireAuth(), async (req, res) => {
+    const s = sessionOf(res)
+    const b = bodyOf(req)
+    const targetType = oneOf(b.targetType, 'targetType', ['order', 'scribe', 'customer', 'other'] as const)
+    const targetId = str(b.targetId, 'targetId', { max: 60 })
+    const reason = str(b.reason, 'reason', { min: 3, max: 120 })
+    const details = optStr(b.details, 'details', 1000) ?? ''
+    const report = await legal.createMisuseReport(db, s.phone, targetType, targetId, reason, details)
+    res.status(201).json({ success: true, report })
+  })
+
+  app.get('/api/admin/reports', requireAuth('admin'), async (_req, res) => {
+    res.json({ success: true, reports: await legal.listMisuseReports(db) })
   })
 
   app.get('/api/health', async (_req, res) => {
