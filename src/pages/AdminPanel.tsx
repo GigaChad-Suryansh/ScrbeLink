@@ -14,8 +14,17 @@ import { api, fetchBlobUrl } from '../lib/api'
 import { inr } from '../lib/pricing'
 import AdminCouriers from '../components/AdminCouriers'
 import AdminTickets from '../components/AdminTickets'
+import AdminOrdersOps from '../components/AdminOrdersOps'
 
-type Tab = 'cards' | 'disputes' | 'strikes' | 'notifications' | 'refunds' | 'couriers' | 'tickets'
+type Tab = 'ops' | 'cards' | 'disputes' | 'strikes' | 'notifications' | 'refunds' | 'couriers' | 'tickets'
+
+interface DashboardStats {
+  ordersToday: number
+  lateOrders: number
+  openDisputes: number
+  pendingScribes: number
+  moneyInEscrow: number
+}
 
 /** Plays a protected evidence video: it is fetched with the admin's token, then shown from a blob URL. */
 function EvidenceVideo({ url }: { url: string }) {
@@ -41,7 +50,8 @@ export default function AdminPanel() {
   const [disputes, setDisputes] = useState<DisputeRecord[]>([])
   const [notifications, setNotifications] = useState<NotificationLog[]>([])
   const [refundList, setRefundList] = useState<Array<{ orderId: string; amount: number; reason: string; status: string; createdAt: string }>>([])
-  const [activeTab, setActiveTab] = useState<Tab>('cards')
+  const [stats, setStats] = useState<DashboardStats | null>(null)
+  const [activeTab, setActiveTab] = useState<Tab>('ops')
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [adminNote, setAdminNote] = useState('')
@@ -49,16 +59,18 @@ export default function AdminPanel() {
 
   const load = useCallback(async () => {
     try {
-      const [s, d, n, r] = await Promise.all([
+      const [s, d, n, r, st] = await Promise.all([
         api<{ scribes: AdminScribeApproval[] }>('GET', '/api/admin/scribes', { as: 'admin' }),
         api<{ disputes: DisputeRecord[] }>('GET', '/api/admin/disputes', { as: 'admin' }),
         api<{ notifications: NotificationLog[] }>('GET', '/api/admin/notifications', { as: 'admin' }),
         api<{ refunds: typeof refundList }>('GET', '/api/admin/refunds', { as: 'admin' }),
+        api<{ stats: DashboardStats }>('GET', '/api/admin/stats', { as: 'admin' }),
       ])
       setRefundList(r.refunds)
       setScribes(s.scribes)
       setDisputes(d.disputes)
       setNotifications(n.notifications)
+      setStats(st.stats)
       setError('')
     } catch (e) {
       setError((e as Error).message)
@@ -91,6 +103,12 @@ export default function AdminPanel() {
 
   const handleStrike = (id: string, delta: number) =>
     act(() => api('POST', `/api/admin/scribes/${id}/strikes`, { as: 'admin', body: { delta } }), delta > 0 ? 'Strike issued.' : 'Strike pardoned.')
+
+  const handleSuspend = (id: string, suspended: boolean) =>
+    act(() => api('POST', `/api/admin/scribes/${id}/suspend`, { as: 'admin', body: { suspended } }), suspended ? 'Scribe suspended.' : 'Scribe reinstated.')
+
+  const handleResendNotification = (n: NotificationLog) =>
+    act(() => api('POST', '/api/admin/notifications/resend', { as: 'admin', body: { phone: n.recipient, event: n.templateName, message: n.content } }), `Resent message to ${n.recipient}.`)
 
   const handleResolveDispute = (id: string, decision: 'REFUNDED_TO_CUSTOMER' | 'RELEASED_TO_SCRIBE' | 'SPLIT') =>
     act(
@@ -129,8 +147,39 @@ export default function AdminPanel() {
         </div>
       )}
 
+      {stats && (
+        <div className="metrics-grid" style={{ marginBottom: 20 }}>
+          <div className="card metric-card">
+            <div className="metric-label">Orders today</div>
+            <div className="metric-num">{stats.ordersToday}</div>
+          </div>
+          <div className="card metric-card">
+            <div className="metric-label">Late orders</div>
+            <div className={`metric-num ${stats.lateOrders > 0 ? 'metric-num--warn' : ''}`}>{stats.lateOrders}</div>
+          </div>
+          <div className="card metric-card">
+            <div className="metric-label">Open disputes</div>
+            <div className="metric-num">{stats.openDisputes}</div>
+          </div>
+          <div className="card metric-card">
+            <div className="metric-label">Pending scribes</div>
+            <div className="metric-num">{stats.pendingScribes}</div>
+          </div>
+          <div className="card metric-card">
+            <div className="metric-label">Money in escrow</div>
+            <div className="metric-num metric-num--brand">{inr(stats.moneyInEscrow)}</div>
+          </div>
+        </div>
+      )}
+
       {/* Admin Subnav Tabs */}
       <div className="admin-tabs">
+        <button
+          className={`admin-tab-btn ${activeTab === 'ops' ? 'tab-btn--active' : ''}`}
+          onClick={() => setActiveTab('ops')}
+        >
+          Orders &amp; Ops
+        </button>
         <button
           className={`admin-tab-btn ${activeTab === 'cards' ? 'tab-btn--active' : ''}`}
           onClick={() => setActiveTab('cards')}
@@ -340,6 +389,13 @@ export default function AdminPanel() {
                         <button className="btn btn-ghost" style={{ padding: '4px 10px', fontSize: 12 }} onClick={() => handleStrike(s.scribeId, -1)} disabled={s.strikes <= 0}>
                           - Pardon Strike
                         </button>
+                        <button
+                          className="btn btn-ghost"
+                          style={{ padding: '4px 10px', fontSize: 12 }}
+                          onClick={() => handleSuspend(s.scribeId, !s.isSuspended)}
+                        >
+                          {s.isSuspended ? 'Reinstate' : 'Suspend'}
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -350,6 +406,7 @@ export default function AdminPanel() {
         </div>
       )}
 
+      {activeTab === 'ops' && <AdminOrdersOps onChanged={load} />}
       {activeTab === 'couriers' && <AdminCouriers />}
       {activeTab === 'tickets' && <AdminTickets />}
 
@@ -393,6 +450,13 @@ export default function AdminPanel() {
                       <span className="timeline-time">{n.sentAt}</span>
                     </div>
                     <p className="timeline-note">{n.content}</p>
+                    <button
+                      className="btn btn-ghost sm"
+                      style={{ marginTop: 6 }}
+                      onClick={() => handleResendNotification(n)}
+                    >
+                      Resend
+                    </button>
                   </div>
                 </div>
               ))}

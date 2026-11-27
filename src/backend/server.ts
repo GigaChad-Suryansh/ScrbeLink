@@ -42,6 +42,7 @@ import * as refunds from './refunds'
 import { REFUND_POLICY, customerCanCancel, type RefundReason } from '../shared/refunds'
 import * as sched from './scheduler'
 import * as logi from './logisticsService'
+import * as adminOps from './adminOps'
 import {
   calcTds, encryptPan, panLast4, recordTds, validatePan, ytdGross,
   issuePayout, monthlyStatement, razorpayXConfig,
@@ -1389,6 +1390,95 @@ export function createApp(db: Db) {
 
   app.get('/api/admin/notifications', requireAuth('admin'), async (_req, res) => {
     res.json({ success: true, notifications: await logi.getNotificationLogs(db) })
+  })
+
+  // ── Phase 17: Admin dashboard, search, manual ops, CSV export ──────────────
+
+  app.get('/api/admin/stats', requireAuth('admin'), async (_req, res) => {
+    res.json({ success: true, stats: await adminOps.getAdminDashboardStats(db) })
+  })
+
+  app.get('/api/admin/orders', requireAuth('admin'), async (req, res) => {
+    const q = typeof req.query.q === 'string' ? req.query.q.slice(0, 80) : ''
+    res.json({ success: true, orders: await adminOps.searchAdminOrders(db, q) })
+  })
+
+  app.get('/api/admin/audit-log', requireAuth('admin'), async (_req, res) => {
+    res.json({ success: true, entries: await adminOps.getAuditLog(db, 100) })
+  })
+
+  app.post('/api/admin/orders/:id/reassign', requireAuth('admin'), async (req, res) => {
+    const orderId = idLike(req.params.id, 'orderId')
+    const reason = optStr(bodyOf(req).reason, 'reason', 200) ?? 'Manual admin reassignment'
+    const updated = await db.tx(async (q) => {
+      const order = await fetchOrder(q, orderId, true)
+      if (!order) throw notFound('Order not found')
+      if (!validateTransition(order.status, 'Reassigned').success) {
+        throw new HttpError(409, `Cannot reassign an order in status ${order.status}`)
+      }
+      const prevScribe = order.scribeId
+      order.scribeId = undefined
+      order.scribeName = undefined
+      order.intakeDeadline = undefined
+      order.nextCheckInDue = undefined
+      await q.query('UPDATE rush_watches SET is_closed=true WHERE order_id=$1', [orderId])
+      await applyTransition(q, order, 'Reassigned', `Admin reassigned (${reason}). Previous scribe: ${prevScribe ?? 'none'}.`)
+      await sched.audit(q, `[ADMIN] Reassigned ${orderId} from ${prevScribe ?? 'unassigned'}: ${reason}`)
+      return order
+    })
+    return res.json({ success: true, order: updated })
+  })
+
+  app.post('/api/admin/orders/:id/refund', requireAuth('admin'), async (req, res) => {
+    const orderId = idLike(req.params.id, 'orderId')
+    const reason = optStr(bodyOf(req).reason, 'reason', 200) ?? 'Admin manual refund'
+    const out = await db.tx(async (q) => {
+      const order = await fetchOrder(q, orderId, true)
+      if (!order) throw notFound('Order not found')
+      const r = await refunds.recordRefund(q, order, 'ADMIN_CANCELLED', refundsAreInstant())
+      if (validateTransition(order.status, 'Cancelled').success) {
+        await applyTransition(q, order, 'Cancelled', `Admin refund: ${reason}`)
+      }
+      await sched.audit(q, `[ADMIN] Manual refund on ${orderId}: ${reason}`)
+      return r
+    })
+    return res.json({ success: true, refund: out })
+  })
+
+  app.post('/api/admin/scribes/:id/suspend', requireAuth('admin'), async (req, res) => {
+    const id = idLike(req.params.id, 'scribe id')
+    const suspended = bool(bodyOf(req).suspended, 'suspended')
+    const scribe = await db.tx(async (q) => {
+      if (!(await logi.getScribe(q, id))) throw notFound('Scribe not found')
+      await q.query(
+        `INSERT INTO scribe_strikes (scribe_id, strikes, is_suspended)
+         VALUES ($1, 0, $2)
+         ON CONFLICT (scribe_id) DO UPDATE SET is_suspended = EXCLUDED.is_suspended`,
+        [id, suspended],
+      )
+      await sched.audit(q, `[ADMIN] Scribe ${id} ${suspended ? 'suspended' : 'reinstated'}.`)
+      return logi.getScribe(q, id)
+    })
+    return res.json({ success: true, scribe })
+  })
+
+  app.post('/api/admin/notifications/resend', requireAuth('admin'), async (req, res) => {
+    const b = bodyOf(req)
+    const to = phone(b.phone, 'phone')
+    const event = str(b.event, 'event', { max: 60 })
+    const message = str(b.message, 'message', { max: 500 })
+    await db.tx(async (q) => {
+      await logi.sendNotification(q, to, 'WHATSAPP', event, message)
+      await sched.audit(q, `[ADMIN] Resent ${event} message to ${to}.`)
+    })
+    return res.json({ success: true })
+  })
+
+  app.get('/api/admin/export/accounts.csv', requireAuth('admin'), async (_req, res) => {
+    const csv = await adminOps.buildAccountsCsv(db)
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8')
+    res.setHeader('Content-Disposition', 'attachment; filename="scribelink-accounts.csv"')
+    return res.send(csv)
   })
 
   app.get('/api/health', async (_req, res) => {
