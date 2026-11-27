@@ -265,4 +265,34 @@ export const MIGRATIONS: Migration[] = [
       `CREATE INDEX misuse_reports_status_idx ON misuse_reports (status, created_at DESC)`,
     ],
   },
+  {
+    // Phase 20: referral codes and customer credits. Credits come out of ScribeLink's share,
+    // never the scribe's payout, so orders.scribe_payout is untouched by a discount.
+    version: 9,
+    sql: [
+      `ALTER TABLE orders ADD COLUMN discount numeric(10,2) NOT NULL DEFAULT 0`,
+      `CREATE TABLE referral_codes (
+        phone      text PRIMARY KEY,
+        code       text NOT NULL UNIQUE,
+        created_at timestamptz NOT NULL DEFAULT now()
+      )`,
+      `CREATE TABLE referrals (
+        referee_phone  text PRIMARY KEY,
+        referrer_phone text NOT NULL,
+        status         text NOT NULL DEFAULT 'PENDING',
+        rewarded_order text,
+        created_at     timestamptz NOT NULL DEFAULT now()
+      )`,
+      `CREATE INDEX referrals_referrer_idx ON referrals (referrer_phone)`,
+      `CREATE TABLE customer_credits (
+        id         text PRIMARY KEY,
+        phone      text NOT NULL,
+        amount     numeric(10,2) NOT NULL CHECK (amount > 0),
+        reason     text NOT NULL,
+        order_id   text,
+        created_at timestamptz NOT NULL DEFAULT now()
+      )`,
+      `CREATE INDEX customer_credits_phone_idx ON customer_credits (phone)`,
+    ],
+  },
 ]

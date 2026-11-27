@@ -10,7 +10,9 @@ import RateScribe from '../components/RateScribe'
 import HelpTicket from '../components/HelpTicket'
 import { CANCELLATION_POLICY, REFUND_REASON_TEXT, customerCanCancel, type RefundReason } from '../shared/refunds'
 import { useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
+import ReferralCard from '../components/ReferralCard'
+import { useOrder } from '../lib/orderStore'
 import { useScribePortal } from '../lib/scribeStore'
 import type { OrderStatus } from '../lib/scribeStore'
 import { inr } from '../lib/pricing'
@@ -30,6 +32,8 @@ export default function OrderTracker() {
   const [picked, setPicked] = useState<string | null>(null)
   const [confirmCancel, setConfirmCancel] = useState(false)
   const [cancelError, setCancelError] = useState('')
+  const { dispatch } = useOrder()
+  const nav = useNavigate()
 
   const order = orders.find(o => o.id === (picked ?? orderId)) ?? (orderId ? undefined : orders[0])
 
@@ -106,6 +110,26 @@ export default function OrderTracker() {
       {['Writing', 'Dispatched'].includes(order.status) && <CourierStatus orderId={order.id} />}
 
       {['Delivered', 'Closed'].includes(order.status) && order.scribeId && <RateScribe orderId={order.id} />}
+      {['Delivered', 'Closed'].includes(order.status) && (
+        <div className="card" style={{ padding: 16, marginTop: 16, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          <span style={{ flex: 1, fontSize: 14.5 }}>Need more notes written? Start a new order with the same {order.scribeName ? 'scribe and ' : ''}pen. Your saved gates are kept.</span>
+          <button
+            type="button"
+            className="btn btn-primary"
+            id="order-again-btn"
+            onClick={() => {
+              const pen = (['fountain', 'gel', 'ballpoint'] as const).find((p) => order.penStyle.toLowerCase().includes(p)) ?? 'ballpoint'
+              const ink = order.penStyle.toLowerCase().includes('black') ? 'black' : 'blue'
+              dispatch({ type: 'RESET' })
+              dispatch({ type: 'SET_PEN', pen, ink })
+              if (order.scribeId) dispatch({ type: 'SET_SCRIBE', scribeId: order.scribeId, scribeName: order.scribeName ?? null })
+              nav('/order/upload')
+            }}
+          >
+            Order again
+          </button>
+        </div>
+      )}
       {order.status !== 'Draft' && <HelpTicket orderId={order.id} role="customer" />}
 
       {order.refund && (
@@ -264,6 +288,7 @@ export default function OrderTracker() {
           </div>
         </div>
       </div>
+      <ReferralCard />
     </div>
   )
 }

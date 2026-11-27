@@ -15,8 +15,9 @@ import { inr } from '../lib/pricing'
 import AdminCouriers from '../components/AdminCouriers'
 import AdminTickets from '../components/AdminTickets'
 import AdminOrdersOps from '../components/AdminOrdersOps'
+import AdminPilot from '../components/AdminPilot'
 
-type Tab = 'ops' | 'cards' | 'disputes' | 'strikes' | 'notifications' | 'refunds' | 'couriers' | 'tickets'
+type Tab = 'ops' | 'pilot' | 'cards' | 'disputes' | 'strikes' | 'notifications' | 'refunds' | 'couriers' | 'tickets'
 
 interface DashboardStats {
   ordersToday: number
@@ -181,6 +182,12 @@ export default function AdminPanel() {
           Orders &amp; Ops
         </button>
         <button
+          className={`admin-tab-btn ${activeTab === 'pilot' ? 'tab-btn--active' : ''}`}
+          onClick={() => setActiveTab('pilot')}
+        >
+          Pilot metrics
+        </button>
+        <button
           className={`admin-tab-btn ${activeTab === 'cards' ? 'tab-btn--active' : ''}`}
           onClick={() => setActiveTab('cards')}
         >
@@ -223,6 +230,8 @@ export default function AdminPanel() {
           Message log ({notifications.length})
         </button>
       </div>
+
+      {activeTab === 'pilot' && <AdminPilot />}
 
       {/* ── 1. Handwriting Card Verification Tab ── */}
       {activeTab === 'cards' && (

@@ -37,6 +37,7 @@ import AdminPanel from './pages/AdminPanel'
 import DisputeFiling from './pages/DisputeFiling'
 import RiderPage from './pages/RiderPage'
 import LegalPage from './pages/LegalPage'
+import HelpPage from './pages/HelpPage'
 
 import './App.css'
 import './order.css'
@@ -186,6 +187,7 @@ export default function App() {
 
         <Route path="/rider/:token" element={<RiderPage />} />
         <Route path="/legal/:doc" element={<LegalPage />} />
+        <Route path="/help" element={<HelpPage />} />
 
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

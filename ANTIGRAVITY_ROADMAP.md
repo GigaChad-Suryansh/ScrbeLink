@@ -142,10 +142,16 @@ Things a real launch needs that are not on any list yet:
 - Playwright end-to-end tests in CI for the whole journey.
 - **Done when:** the journey in section 1 runs on a public URL with real SMS, payment and Porter in test mode.
 
-### Phase 20: Pilot and growth
+### Phase 20: Pilot and growth (core done)
 - One-campus pilot with a small group of scribes and customers; track time to accept, time to deliver, dispute rate, rating.
 - Fix the top three problems before opening a second campus.
 - Then: referral codes, repeat-order shortcut, student ID discount, Hindi, installable app (PWA).
+- **Done:** admin "Pilot metrics" tab (`/api/admin/pilot-metrics`, weekly medians from order timelines; no campus lock, by owner decision);
+  referral codes (`referrals.ts`, migration 9): ₹50 off the friend's first order, ₹50 credit to the referrer when it is delivered,
+  max 20 rewards per referrer, credit released on cancel, never below the scribe's payout, scribe pay unchanged;
+  ratings and a "Sample" badge on scribe picker cards; demo scribes hidden and never seeded in production;
+  `/help` page; "Order again" on delivered orders; PWA (manifest, icons, `public/sw.js`, which never caches `/api/` or `/rider/`).
+- **Left:** run the real pilot; student ID discount (needs owner decision on amount); Hindi; show the referral discount on the invoice PDF.
 
 ---
 
@@ -159,6 +165,9 @@ Minimum to take the first real order: **9, 10, 11, 12, 13, 18, 19**. Everything 
 - **Porter's fare is built into the price.** No separate delivery fee. `pricing.ts` must cover the Porter cost, so Phase 11 should compute the margin per distance band and the owner should check that ₹30/page still leaves room; keep a flat minimum order charge if short orders lose money.
 - **If a college bans the service, students will still use it.** Plan: deliver to a gate or nearby public point, not inside campus; keep the policy page honest (Phase 18); do not tell students how to hide use from their college.
 - **Minimum order is 10 pages** (more than 1,800 words, at least ₹300). Built and enforced in the API, upload step and calculator (`RATES.minOrderPages`). This also covers the short-order Porter cost worry.
+- **Referral:** ₹50 off for the new customer and ₹50 credit for the referrer, paid from ScribeLink's share (never the scribe's ₹20).
+- **Pilot:** no campus lock yet; metrics only.
+- **Demo scribes:** hidden in production, labelled "Sample" in dev.
 - **Printing add-on stays at ₹2 per sheet** for now. Revisit after the pilot with real costs.
 
 ## 6. Still open

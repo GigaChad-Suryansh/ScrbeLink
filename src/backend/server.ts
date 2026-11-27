@@ -45,6 +45,8 @@ import * as sched from './scheduler'
 import * as logi from './logisticsService'
 import * as adminOps from './adminOps'
 import * as legal from './legal'
+import * as referrals from './referrals'
+import * as pilot from './pilot'
 import { createOtpStore } from './redisStore'
 import { s3ConfigFromEnv } from './s3Store'
 import { logEvent, reportError } from './telemetry'
@@ -115,6 +117,8 @@ interface OrderDoc {
   nextCheckInDue?: string
   finalDeadline: string
   timeline: Array<{ status: string; timestamp: string; note: string }>
+  /** Referral credit taken off the customer's total. The scribe's payout is not affected. */
+  discount: number
 }
 
 /** A failure the client should see, with the status to send. Throwing inside a transaction rolls it back. */
@@ -153,6 +157,7 @@ const orderFromRow = (r: any): OrderDoc => ({
   nextCheckInDue: iso(r.next_check_in_due),
   finalDeadline: r.final_deadline,
   timeline: r.timeline,
+  discount: Number(r.discount ?? 0),
 })
 
 /** Reads an order. With lock, the row stays locked until the surrounding transaction ends. */
@@ -164,10 +169,10 @@ async function fetchOrder(q: Queryable, id: string, lock = false): Promise<Order
 async function insertOrder(q: Queryable, o: OrderDoc): Promise<void> {
   await q.query(
     `INSERT INTO orders (id, customer_phone, title, subject, status, customer_total, scribe_payout, preferred_scribe_id,
-       pages, words, delivery_otp, addons, pen_style, final_deadline, timeline, created_at, notes_file_id, drop_gate)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13,$14,$15::jsonb,$16,$17,$18::jsonb)`,
+       pages, words, delivery_otp, addons, pen_style, final_deadline, timeline, created_at, notes_file_id, drop_gate, discount)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13,$14,$15::jsonb,$16,$17,$18::jsonb,$19)`,
     [o.id, o.customerPhone ?? null, o.title, o.subject, o.status, o.customerTotal, o.scribePayout, o.preferredScribeId ?? null,
-      o.pages, o.words, o.deliveryOtp, JSON.stringify(o.addons), o.penStyle, o.finalDeadline, JSON.stringify(o.timeline), o.createdAt, o.notesFileId ?? null, o.dropGate ? JSON.stringify(o.dropGate) : null],
+      o.pages, o.words, o.deliveryOtp, JSON.stringify(o.addons), o.penStyle, o.finalDeadline, JSON.stringify(o.timeline), o.createdAt, o.notesFileId ?? null, o.dropGate ? JSON.stringify(o.dropGate) : null, o.discount],
   )
 }
 
@@ -245,6 +250,7 @@ async function applyTransition(q: Queryable, order: OrderDoc, next: OrderStateEn
   if (next === 'Cancelled') {
     const refund = await refunds.recordRefund(q, order, refundReason, refundsAreInstant())
     if (refund) await sched.audit(q, `[REFUND] ₹${refund.amount} for ${order.id} (${refund.reason}).`)
+    await referrals.releaseCredit(q, order.id)
   }
   if (next === 'Closed' || next === 'Cancelled') await files.startRetention(q, order.id)
   // Check-ins only matter while the scribe is writing. After that, a late timer must not cost them a strike.
@@ -258,6 +264,10 @@ async function applyTransition(q: Queryable, order: OrderDoc, next: OrderStateEn
     await sched.registerRushWatch(q, order.id, order.scribeId, order.scribeName ?? order.scribeId, due)
   } else if (next === 'Delivered' && order.scribeId) {
     await sched.registerEscrowClock(q, order.id, order.scribeId, order.scribePayout)
+  }
+  if (next === 'Delivered') {
+    const referrer = await referrals.rewardReferrer(q, order.customerPhone, order.id)
+    if (referrer) await sched.audit(q, `[REFERRAL] ₹${referrals.REFERRAL_CREDIT} credit for the referrer of ${order.id}.`)
   }
 
   order.timeline.push({ status: next, timestamp: new Date().toISOString(), note })
@@ -492,9 +502,15 @@ export function createApp(db: Db) {
     const done = await db.query<{ scribe_id: string; n: string }>(
       `SELECT scribe_id, count(*) AS n FROM orders WHERE status IN ('Delivered','Closed') GROUP BY scribe_id`,
     )
+    const stars = await db.query<{ scribe_id: string; avg: string; n: string }>(
+      `SELECT scribe_id, avg(stars) AS avg, count(*) AS n FROM ratings GROUP BY scribe_id`,
+    )
     const scribes = all
       .filter((x) => x.isApproved && !x.isSuspended)
-      .map((x) => ({
+      .filter((x) => pilot.showDemoScribes() || !pilot.isDemoScribe(x.scribeId))
+      .map((x) => {
+        const r = stars.find((d) => d.scribe_id === x.scribeId)
+        return {
         id: x.scribeId,
         name: x.name,
         college: x.college,
@@ -503,7 +519,11 @@ export function createApp(db: Db) {
         sampleImageUrl: x.handwritingSampleUrl || undefined,
         completedOrders: Number(done.find((d) => d.scribe_id === x.scribeId)?.n ?? 0),
         available: !busy.has(x.scribeId),
-      }))
+        rating: r ? Math.round(Number(r.avg) * 10) / 10 : null,
+        ratingCount: Number(r?.n ?? 0),
+        isSample: pilot.isDemoScribe(x.scribeId),
+        }
+      })
     res.json({ success: true, scribes })
   })
 
@@ -717,8 +737,12 @@ export function createApp(db: Db) {
       createdAt: new Date().toISOString(),
       finalDeadline: computeDeadlines(q.pages).formattedFinalDeadline,
       timeline: [{ status: 'Draft', timestamp: new Date().toISOString(), note: 'Order created. Waiting for payment.' }],
+      discount: 0,
     }
     await db.tx(async (q) => {
+      // Credits come out of ScribeLink's share; the customer always pays at least the scribe's payout.
+      order.discount = await referrals.reserveCredit(q, s.phone, order.id, order.customerTotal, order.scribePayout)
+      order.customerTotal = Math.round((order.customerTotal - order.discount) * 100) / 100
       if (gateId) {
         const saved = await addr.getAddress(q, gateId, s.phone)
         if (!saved) throw new ValidationError('That gate is not in your saved places')
@@ -1554,6 +1578,28 @@ export function createApp(db: Db) {
     })
   })
 
+  // ── Phase 20: referrals and pilot metrics ──────────────────────────────────
+
+  app.get('/api/referrals/me', requireAuth('customer'), async (_req, res) => {
+    res.json({ success: true, referral: await referrals.summary(db, sessionOf(res).phone), creditPerReferral: referrals.REFERRAL_CREDIT })
+  })
+
+  app.post('/api/referrals/apply', requireAuth('customer'), async (req, res) => {
+    const code = str(bodyOf(req).code, 'code', { max: 20 })
+    try {
+      const out = await db.tx((q) => referrals.applyCode(q, sessionOf(res).phone, code))
+      res.json({ success: true, ...out })
+    } catch (e) {
+      if (e instanceof referrals.ReferralError) throw new ValidationError(e.message)
+      throw e
+    }
+  })
+
+  app.get('/api/admin/pilot-metrics', requireAuth('admin'), async (req, res) => {
+    const weeks = req.query.weeks === undefined ? 8 : int(Number(req.query.weeks), 'weeks', 1, 52)
+    res.json({ success: true, weeks: await pilot.getPilotMetrics(db, weeks) })
+  })
+
   // ── Fallbacks ──────────────────────────────────────────────────────────────
 
   app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found' }))
@@ -1587,7 +1633,8 @@ async function main() {
     throw new Error('DATABASE_URL must be set in production (the embedded database is for development only)')
   }
   const db = await createDb({ url: process.env.DATABASE_URL, dataDir: process.env.PGLITE_DIR })
-  if (process.env.SEED_DEMO === 'true') await logi.seedDemoData(db)
+  // Sample scribes are for demos only: never seeded (or listed) in production.
+  if (process.env.SEED_DEMO === 'true' && !isProduction()) await logi.seedDemoData(db)
 
   createApp(db).listen(PORT, () => {
     logEvent('info', 'server_started', { port: PORT, db: db.kind })

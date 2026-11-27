@@ -19,6 +19,10 @@ interface PublicScribe {
   sampleImageUrl?: string
   completedOrders: number
   available: boolean
+  rating: number | null
+  ratingCount: number
+  /** Seeded demo scribe. Only listed outside production. */
+  isSample?: boolean
 }
 
 export default function StepScribe() {
@@ -86,6 +90,7 @@ export default function StepScribe() {
               aria-label={`Select scribe ${s.name}`}
             >
               {!s.available && <span className="scribe-badge scribe-badge--busy">Busy</span>}
+              {s.isSample && <span className="scribe-badge scribe-badge--busy" style={{ left: 12, right: 'auto' }}>Sample</span>}
               {selected === s.id && <span className="scribe-badge scribe-badge--selected">Selected</span>}
 
               <div className="scribe-header">
@@ -98,6 +103,9 @@ export default function StepScribe() {
 
               <div className="scribe-meta">
                 <span className="scribe-meta-txt">{s.completedOrders} orders completed</span>
+                <span className="scribe-meta-txt" aria-label={s.rating === null ? 'No ratings yet' : `Rated ${s.rating} out of 5 from ${s.ratingCount} ratings`}>
+                  {s.rating === null ? 'New, no ratings yet' : <><Icon name="star" size={13} /> {s.rating.toFixed(1)} ({s.ratingCount})</>}
+                </span>
               </div>
 
               <div className="paper scribe-sample" aria-label="Handwriting sample">

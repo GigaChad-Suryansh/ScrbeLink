@@ -130,6 +130,7 @@ export function Footer() {
               <li><Link to="/legal/refunds">Refunds</Link></li>
               <li><Link to="/legal/integrity">Academic integrity</Link></li>
               <li><Link to="/legal/contact">Contact</Link></li>
+              <li><Link to="/help">Help</Link></li>
             </ul>
           </div>
         </div>

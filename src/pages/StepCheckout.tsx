@@ -31,11 +31,41 @@ export default function StepCheckout() {
   /** Kept so a customer who closes the payment window can retry without creating a second order. */
   const [draftOrderId, setDraftOrderId] = useState<string | null>(null)
 
+  /** Referral credit waiting to be used, and whether this customer can still enter a friend's code. */
+  const [credit, setCredit] = useState(0)
+  const [canApplyCode, setCanApplyCode] = useState(false)
+  const [code, setCode] = useState('')
+  const [codeMsg, setCodeMsg] = useState('')
+  /** What the server actually charges for the draft order (after any credit). */
+  const [serverTotal, setServerTotal] = useState<number | null>(null)
+
   useEffect(() => {
     api<{ provider: 'test' | 'razorpay' }>('GET', '/api/payment/config', { as: 'customer' })
       .then((c) => setProvider(c.provider))
       .catch(() => undefined)
+    loadReferral()
   }, [])
+
+  function loadReferral() {
+    api<{ referral: { credit: number; canApplyCode: boolean } }>('GET', '/api/referrals/me', { as: 'customer' })
+      .then((r) => {
+        setCredit(r.referral.credit)
+        setCanApplyCode(r.referral.canApplyCode)
+      })
+      .catch(() => undefined)
+  }
+
+  async function onApplyCode() {
+    setCodeMsg('')
+    try {
+      await api('POST', '/api/referrals/apply', { as: 'customer', body: { code } })
+      setCodeMsg('Code applied. ₹50 off this order.')
+      setCode('')
+      loadReferral()
+    } catch (e) {
+      setCodeMsg((e as Error).message)
+    }
+  }
 
   const q = quote({
     words: state.words,
@@ -44,6 +74,9 @@ export default function StepCheckout() {
     graphs: state.graphs,
     customTemplate: state.customTemplate,
   })
+  // The server applies credit only while the customer still pays at least the scribe's share.
+  const discount = credit > 0 && q.customerTotal - credit >= q.scribeTotal ? credit : 0
+  const payable = serverTotal ?? q.customerTotal - discount
 
   const penLabels: Record<string, string> = {
     ballpoint: 'Ballpoint',
@@ -75,7 +108,7 @@ export default function StepCheckout() {
         notesFileId = up.fileId
       }
       // 1. The server creates the order and prices it itself.
-      const created = draftOrderId ? { order: { id: draftOrderId } } : await api<{ order: { id: string } }>('POST', '/api/orders/create', {
+      const created = draftOrderId ? { order: { id: draftOrderId, customerTotal: payable } } : await api<{ order: { id: string; customerTotal: number } }>('POST', '/api/orders/create', {
         as: 'customer',
         body: {
           title: (state.doc?.name ?? 'Untitled document').replace(/\.[^.]+$/, ''),
@@ -92,7 +125,9 @@ export default function StepCheckout() {
         },
       })
       const orderId = created.order.id
+      const amount = Number(created.order.customerTotal)
       setDraftOrderId(orderId)
+      setServerTotal(amount)
 
       if (provider === 'razorpay') {
         const rz = await api<{ paymentId: string; keyId: string; rzpOrderId: string; amount: number }>('POST', '/api/payment/razorpay/order', { as: 'customer', body: { orderId } })
@@ -106,7 +141,7 @@ export default function StepCheckout() {
       // 2. Start the UPI payment for exactly that amount.
       const started = await api<{ payment: UpiPaymentIntent }>('POST', '/api/payment/upi/initiate', {
         as: 'customer',
-        body: { orderId, amount: q.customerTotal, payerVpa: upi.trim() },
+        body: { orderId, amount, payerVpa: upi.trim() },
       })
       setPaymentIntent(started.payment)
 
@@ -206,13 +241,32 @@ export default function StepCheckout() {
                 </li>
               ))}
             </ul>
+            {discount > 0 && (
+              <ul className="lines">
+                <li>
+                  <span style={{ fontWeight: 600 }}>Referral credit</span>
+                  <span style={{ whiteSpace: 'nowrap', fontWeight: 600, color: '#166534' }}>-{inr(discount)}</span>
+                </li>
+              </ul>
+            )}
             <div className="total">
               <span>Total</span>
-              <strong>{inr(q.customerTotal)}</strong>
+              <strong>{inr(payable)}</strong>
             </div>
             <p className="eta">
-              ⏱ Turnaround Deadline: {formatDuration(q.turnaroundHours)}
+              <Icon name="clock" size={14} /> Turnaround deadline: {formatDuration(q.turnaroundHours)}
             </p>
+
+            {canApplyCode && !draftOrderId && (
+              <div className="field">
+                <label htmlFor="referral-code">Have a friend's referral code?</label>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <input id="referral-code" type="text" value={code} onChange={(e) => setCode(e.target.value)} placeholder="SLXXXXXX" maxLength={20} style={{ flex: 1 }} />
+                  <button type="button" className="btn btn-ghost" onClick={onApplyCode} disabled={code.trim().length < 4} id="referral-apply-btn">Apply</button>
+                </div>
+              </div>
+            )}
+            {codeMsg && <p style={{ fontSize: 13, margin: '0 0 12px' }} role="status">{codeMsg}</p>}
 
             <div style={{ background: '#f0fdf4', padding: '10px 12px', borderRadius: 8, border: '1px solid #bbf7d0', marginBottom: 16 }}>
               <p style={{ fontSize: 12.5, color: '#166534', margin: 0 }}>
@@ -270,7 +324,7 @@ export default function StepCheckout() {
                   id="pay-btn"
                   style={{ fontSize: 16 }}
                 >
-                  Pay {inr(q.customerTotal)}{provider === 'test' ? ' with UPI' : ''}
+                  Pay {inr(payable)}{provider === 'test' ? ' with UPI' : ''}
                 </button>
               </>
             ) : (
